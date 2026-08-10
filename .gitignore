@@ -17,3 +17,6 @@ reports/*.png
 # OS files
 .DS_Store
 Thumbs.db
+
+# extra files
+visualization/run_plots.py
