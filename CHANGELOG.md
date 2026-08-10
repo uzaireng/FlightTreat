@@ -1,30 +1,60 @@
 # Changelog
 
-All notable changes to UAV-AERO ENGINE will be documented in this file.
+All notable changes to UAV-AERO ENGINE are documented here.
 
 ## [Unreleased]
 
-Development changes for the next release.
+Changes that are being developed for the next version will appear here.
 
-## [0.1.0] - Engineering Toolkit
+## [0.1.0] — Engineering Toolkit
 
 ### Added
 
-- Initial UAV-AERO ENGINE project structure.
-- Initial project documentation.
-- Scientific Python dependency declaration.
+- Initial UAV-AERO ENGINE project structure
+- Geometry calculator
+- Rectangle area calculation
+- Triangle area calculation
+- Circle area calculation
+- Trapezoid area calculation
+- Delta wing area calculation
+- Geometry input validation
+- Geometry exception handling
+- Automated geometry tests
+- Test runner
+- Engineering dataset manager
+- Flight-test CSV dataset
+- CSV reading and writing
+- Dataset statistics
+- Dataset filtering
+- Processed-data export
+- Altitude visualization
+- Battery visualization
+- Speed visualization
+- Wind visualization
+- SciPy optimization experiment
+- trimesh mesh-analysis experiment
+- Initial technical documentation
 
 ### Improved
 
-- None.
+- Established modular project architecture
+- Added repository-level dependency management
+- Added rules for excluding generated reports from version control
 
 ### Fixed
 
-- None.
+No major bugs have been formally recorded for the V0.1.0 release.
 
 ### Known Limitations
 
-- Geometry calculations are not implemented yet.
-- Dataset management is not implemented yet.
-- Engineering visualizations are not implemented yet.
-- Automated tests are not implemented yet.
+- No aerodynamic solver
+- No CFD simulation
+- No 3D UAV upload workflow
+- No mesh preprocessing pipeline
+- No backend API
+- No frontend
+- No database
+- No AI analysis
+- No automated PDF report generation
+- Visualization functionality is limited to basic engineering plots
+- Dataset management is limited to basic CSV workflows
