@@ -100,6 +100,8 @@ trimesh:
 
 python experiments/trimesh_demo.py
 
+
+
 Project Structure
 
 UAV-AERO-ENGINE/
@@ -123,6 +125,13 @@ Screenshots
 
 Screenshots and visual demonstrations will be added as the project
 develops.
+
+## Development Status
+
+v0.1.0 is currently under active development.
+
+This version establishes the initial engineering toolkit, including geometry calculations, engineering dataset processing, visualization, scientific-library experiments, and automated testing.
+
 
 Roadmap
 Version	Focus
