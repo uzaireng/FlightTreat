@@ -22,17 +22,22 @@ from geometry.calculator import (
 def test_rectangle_area_valid(length, width, expected):
     assert rectangle_area(length, width) == expected
 
-# def test_rectangle_area_valid():
-#     assert rectangle_area(10, 8) == 80
 
-def test_rectangle_area_invalid():
+@pytest.mark.parametrize("length, width", [
+    (-10, 8),
+    (10, -8),
+    (0, 7)])
+
+def test_rectangle_area_invalid(length, width):
     with pytest.raises(ValueError):
-        rectangle_area(-10,8)
+        rectangle_area(length, width)
 
-def test_rectangle_area_zero():
-    with pytest.raises(ValueError):
-        rectangle_area(0,7)
 
+
+@pytest.mark.parametrize("invalid_input", ["10", None, [5], {"a": 1}])
+def test_rectangle_area_type_error(invalid_input):
+    with pytest.raises(TypeError, match="must be a number"):
+        rectangle_area(invalid_input, 8)
 
 # =========================================================
 # 1. TRIANGLE AREA TESTS (Formula: 0.5 * base * height)
@@ -47,46 +52,46 @@ def test_triangle_area_valid(base, height, expected):
     assert triangle_area(base, height) == expected
 
 
-# def test_triangle_area_valid():
-#     assert triangle_area(10, 4) == 20
+@pytest.mark.parametrize("height, base", [
+    (-10, 4),
+    (10, -4),
+    (0, 4),
+])
 
-def test_triangle_area_invalid():
+def test_triangle_area_invalid(height, base):
     with pytest.raises(ValueError):
-        triangle_area(-10, 4)
+        triangle_area(height, base)
 
-def test_triangle_area_zero():
-    with pytest.raises(ValueError):
-        triangle_area(0, 4)
+
+@pytest.mark.parametrize("invalid_input", ["10", None, [5], {"a": 1}])
+def test_triangle_area_type_error(invalid_input):
+    with pytest.raises(TypeError, match="must be a number"):
+        triangle_area(invalid_input, 4)
+
 
 # =========================================================
 # 2. CIRCLE AREA TESTS (Formula: pi * radius^2)
 # =========================================================
 
 @pytest.mark.parametrize("radius, expected", [
-    (5, pytest.approx(78.539816)),           
+    (5, pytest.approx(78.539816, rel=1e-5)),           
     (2.5, pytest.approx(19.634954)),         
     (1, pytest.approx(math.pi)),             
 ])
 def test_circle_area_valid(radius, expected):
     assert circle_area(radius) == expected
 
-# def test_circle_area_valid():
-#     assert circle_area(5) == pytest.approx(78.539816, rel=1e-5)
 
-
-def test_circle_area_valid():
-    assert circle_area(5) == pytest.approx(78.539816, rel=1e-5)
-
-
-def test_circle_area_invalid():
+@pytest.mark.parametrize("radius", [-5, 0])
+def test_circle_area_valid(radius):
     with pytest.raises(ValueError):
-        circle_area(-5)
+        circle_area(radius)
 
 
-def test_circle_area_zero():
-    with pytest.raises(ValueError):
-        circle_area(0)
-
+@pytest.mark.parametrize("invalid_radius", ["five", None, [5]])
+def test_circle_area_type_error(invalid_radius):
+    with pytest.raises(TypeError, match="must be a number."):
+        circle_area(invalid_radius)
 
 # =========================================================
 # 3. TRAPEZOID AREA TESTS (Formula: 0.5 * (b1 + b2) * h)
@@ -100,18 +105,21 @@ def test_circle_area_zero():
 def test_trapezoid_area_valid(base1, base2, height, expected):
     assert trapezoid_area(base1, base2, height) == expected
 
-# def test_trapezoid_area_valid():
-#     assert trapezoid_area(10, 6, 4) == 32
 
-
-def test_trapezoid_area_invalid():
+@pytest.mark.parametrize("base1, base2, height", [
+    (-10, 6, 4),
+    (10, 0, 4),
+    (10, 6, -4),
+])
+def test_trapezoid_area_value_error(base1, base2, height):
     with pytest.raises(ValueError):
-        trapezoid_area(-10, 6, 4)
+        trapezoid_area(base1, base2, height)
 
 
-def test_trapezoid_area_zero():
-    with pytest.raises(ValueError):
-        trapezoid_area(10, 0, 4)
+@pytest.mark.parametrize("invalid_val", ["10", None])
+def test_trapezoid_area_type_error(invalid_val):
+    with pytest.raises(TypeError, match="must be a number"):
+        trapezoid_area(invalid_val, 6, 4)
 
 
 # =========================================================
@@ -127,15 +135,19 @@ def test_trapezoid_area_zero():
 def test_delta_wing_area_valid(span, root_chord, expected):
     assert delta_wing_area(span, root_chord) == expected
 
-# def test_delta_wing_area_valid():
-#     assert delta_wing_area(8, 4) == 16
 
-
-def test_delta_wing_area_invalid():
+@pytest.mark.parametrize("span, root_chord", [
+    (-8, 4),
+    (8, 0),
+])
+def test_delta_wing_area_value_error(span, root_chord):
     with pytest.raises(ValueError):
-        delta_wing_area(-8, 4)
+        delta_wing_area(span, root_chord)
 
 
-def test_delta_wing_area_zero():
-    with pytest.raises(ValueError):
-        delta_wing_area(8, 0)
+@pytest.mark.parametrize("invalid_val", ["8", None])
+def test_delta_wing_area_type_error(invalid_val):
+    with pytest.raises(TypeError, match="must be a number"):
+        delta_wing_area(invalid_val, 4)
+
+        
