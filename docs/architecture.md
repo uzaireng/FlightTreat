@@ -107,3 +107,14 @@ Frontend dashboard
 3D visualization
 AI analysis
 Automated report generation
+
+## Version 0.1 Development Architecture
+
+Version 0.1 establishes the initial engineering toolkit architecture.
+
+The project separates geometry calculations, engineering datasets,
+visualization, experiments, testing, documentation, and generated
+analysis outputs into dedicated areas.
+
+This modular structure is intended to support the expansion of the
+project into a larger aerodynamic analysis platform in future versions.
