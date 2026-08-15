@@ -34,12 +34,17 @@ Changes that are being developed for the next version will appear here.
 - SciPy optimization experiment
 - trimesh mesh-analysis experiment
 - Initial technical documentation
+- Integrated geometry, dataset, and visualization modules through `main.py`.
+- Added interactive engineering toolkit menu.
+- Added end-to-end workflow testing.
+
 
 ### Improved
 
 - Established modular project architecture
 - Added repository-level dependency management
 - Added rules for excluding generated reports from version control
+- Added a unified entry point for the v0.1 engineering toolkit.
 
 ### Fixed
 

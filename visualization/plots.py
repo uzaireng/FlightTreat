@@ -1,5 +1,7 @@
 from pathlib import Path
 import matplotlib.pyplot as plt
+from datasets.manager import get_current_data
+
 # import pandas as pd
 
 def _plot_column(dataframe, column, output_path, title):
@@ -22,11 +24,11 @@ def _plot_column(dataframe, column, output_path, title):
     plt.plot(dataframe["Altitude"], dataframe[column])
 
     plt.title(title)
-    plt.xlabel("Altitude")
+    plt.xlabel("Altitude (meters)")
     plt.ylabel(column)
     plt.grid(True)
-
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.show()
+    # plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
@@ -44,8 +46,8 @@ def plot_altitude(dataframe, output_path="reports/altitudes.png"):
     plt.xlabel("Flight Sample")
     plt.ylabel("Altitude")
     plt.grid(True)
-    # plt.show()
-    plt.savefig(path, dpi=150, bbox_inches="tight")
+    plt.show()
+    # plt.savefig(path, dpi=150, bbox_inches="tight")
     plt.close()
 
 
@@ -60,3 +62,23 @@ def plot_speed(dataframe, output_path="reports/speed.png"):
 def plot_wind(dataframe, output_path="reports/wind.png"):
     _plot_column(dataframe, "Wind", output_path, "Wind vs Altitude")
 
+# ==========================================
+#            SMART WRAPPER 
+# ==========================================
+
+def run_plot_function(plot_func):
+    df = get_current_data()
+    if df is None:
+       print("\n⚠️Firstly, Load the CSV form 'Data Set Manager'!")
+       return
+    try:
+        plot_func(df)
+    except Exception as e:
+        print(f"Plot Error: {e}")
+
+VISUALIZATION_MENU = {
+     "1" : {"title" : "PLOT ALTITUDE GRAPH", "func" : lambda: run_plot_function(plot_altitude)},
+     "2" : {"title" : "PLOT BATTERY GRAPH", "func" : lambda: run_plot_function(plot_battery)},
+     "3" : {"title" : "PLOT SPEED GRAPH", "func" : lambda: run_plot_function(plot_speed)},
+     "4" : {"title" : "PLOT WIND GRAPH", "func" : lambda: run_plot_function(plot_wind)},
+}     
