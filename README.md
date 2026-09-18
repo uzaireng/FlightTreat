@@ -1,151 +1,63 @@
-# UAV-AERO ENGINE
+# Lightweight Web-Based CFD SaaS
 
-## Overview
+Python pipeline for fast 2D airfoil and 3D wing/body aerodynamic analysis, built as ten independent modules with strict data contracts.
 
-UAV-AERO ENGINE is a modular engineering software project being developed
-toward a SaaS platform for UAV aerodynamic analysis.
+## Integration status
 
-The long-term goal is to allow users to provide a 3D UAV model and receive
-engineering analysis including geometry measurements, aerodynamic
-performance, visualization, and generated reports.
+| Module | Status | Contract | Workbench |
+|---|---|---|---|
+| 1. Geometry (`geo_module`) | Integrated | `GeometryOutput` | `src/streamlit_ui/app_geo.py` |
+| 2. Mesh (`math_module`) | Not started | `MeshOutput` | — |
+| 3. Physics (`physics_module`) | Not started | `PhysicsOutput` | — |
+| 4. Aero (`aero_module`) | Not started | `AeroOutput` | — |
+| 5. AI (`ai_module`) | Not started | `AIOutput` | — |
+| 6. UI | Geometry workbench only | — | `app.py` = latest stage |
+| 7–10. API / DB / Auth / Docker | Not started | — | — |
 
-Version 0.1.0 is the first internal engineering toolkit and establishes the
-foundation for future development.
-
-## Current Version
-
-**v0.1.0 — Engineering Toolkit**
-
-Status: Internal Prototype
-
-## Current Capabilities
-
-### Geometry
-
-- Rectangle area
-- Triangle area
-- Circle area
-- Trapezoid area
-- Delta wing area
-- Input validation
-- Exception handling
-- Automated tests
-
-### Engineering Data
-
-- CSV reading
-- CSV writing
-- Descriptive statistics
-- Dataset filtering
-- Processed-data export
-
-### Visualization
-
-- Altitude graph
-- Battery graph
-- Speed graph
-- Wind graph
-- PNG output
-
-### Scientific Libraries
-
-- NumPy
-- Pandas
-- Matplotlib
-- SciPy
-- trimesh
-
-SciPy and trimesh are currently demonstrated through isolated experiments
-and will become more important in future engineering modules.
-
-## Technologies
-
-- Python
-- NumPy
-- Pandas
-- Matplotlib
-- SciPy
-- trimesh
-- pytest
-- Git
-- GitHub
-
-## Installation
-
-Clone the repository and create a Python virtual environment.
+## Setup
 
 ```bash
-python -m venv .venv
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-Activate the environment on Windows:
+`src/` must be on `PYTHONPATH` (the Streamlit entrypoints add it automatically).
 
-.venv\Scripts\activate
+## Run the latest workbench (Module 1)
 
-Install dependencies:
+```bash
+streamlit run src/streamlit_ui/app_geo.py
+```
 
-python -m pip install -r requirements.txt
-Running Tests
-pytest
+Equivalent latest-pipeline alias:
 
-Or:
+```bash
+streamlit run src/streamlit_ui/app.py
+```
 
-python tests/run_tests.py
-Running Scientific Experiments
+The workbench generates NACA sections, plates, parametric wings, cylinders, and imports SVG/DXF/STL/OBJ. Plotly shows 2D polylines and 3D triangle skins.
 
-SciPy:
+## Samples
 
-python experiments/scipy_demo.py
+Two tracks (see [datasets/README.md](datasets/README.md)):
 
-trimesh:
+1. **Module samples** — `datasets/modules/geo/` (and placeholders for math/physics/aero/ai).
+2. **Pipeline cases** — `datasets/pipeline/` (same case ids grow as modules are added).
 
-python experiments/trimesh_demo.py
+Workbench sidebar: **Pipeline case** vs **Module sample**.
 
+## Layout
 
+```text
+datasets/                # Module fixtures + end-to-end pipeline cases
+src/geo_module/          # Module 1
+src/shared/              # Catalog loader + pipeline runner
+src/streamlit_ui/        # Incremental visual test benches
+tests/                   # Smoke tests
+```
 
-Project Structure
+## Module docs
 
-UAV-AERO-ENGINE/
-│
-├── geometry/
-├── datasets/
-├── visualization/
-├── experiments/
-├── reports/
-├── tests/
-├── docs/
-│
-├── main.py
-├── requirements.txt
-├── README.md
-└── CHANGELOG.md
-
-See the documentation in docs/ for more information.
-
-Screenshots
-
-Screenshots and visual demonstrations will be added as the project
-develops.
-
-## Development Status
-
-v0.1.0 is currently under active development.
-
-This version establishes the initial engineering toolkit, including geometry calculations, engineering dataset processing, visualization, scientific-library experiments, and automated testing.
-
-
-Roadmap
-Version	Focus
-v0.1	Engineering Toolkit
-v0.2	Engineering Mathematics
-v0.3	Aerodynamics
-v0.4	Geometry Engine
-v0.5	Physics Engine
-v0.6	Backend
-v0.7	Frontend
-v0.8	AI Engine
-v0.9	Deployment
-v1.0	Integrated SaaS Platform
-
-License
-
-This project is released under the MIT License.
+- [Geometry Engine README](src/geo_module/README.md)
+- [Datasets README](datasets/README.md)
