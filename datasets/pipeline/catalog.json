@@ -1,0 +1,70 @@
+{
+  "kind": "pipeline_cases",
+  "cases": [
+    {
+      "id": "airfoil_naca_0012_cruise",
+      "title": "NACA 0012 cruise (2D)",
+      "description": "Primary real-user 2D journey. Live today: geometry. Later: mesh → potential/panel solve → CL/CD/CM → AI insight, using this same case id.",
+      "active_stages": ["geo"],
+      "stages": {
+        "geo": {
+          "type": "naca",
+          "mode": "2D",
+          "code": "0012",
+          "chord": 1.0,
+          "num_points": 160
+        }
+      }
+    },
+    {
+      "id": "airfoil_naca_4412_cruise",
+      "title": "NACA 4412 cruise (2D)",
+      "description": "Cambered 2D journey for non-zero lift at zero alpha once physics/aero are online.",
+      "active_stages": ["geo"],
+      "stages": {
+        "geo": {
+          "type": "naca",
+          "mode": "2D",
+          "code": "4412",
+          "chord": 1.0,
+          "num_points": 160
+        }
+      }
+    },
+    {
+      "id": "wing_swept_drone_cruise",
+      "title": "Swept drone wing (3D)",
+      "description": "3D lifting-surface journey. Geometry is an open wing skin; math_module must panel this surface without requiring a watertight volume.",
+      "active_stages": ["geo"],
+      "stages": {
+        "geo": {
+          "type": "wing",
+          "mode": "3D",
+          "airfoil": "4412",
+          "chord": 1.0,
+          "span": 5.0,
+          "sweep_deg": 25.0,
+          "dihedral_deg": 5.0,
+          "num_sections": 24,
+          "airfoil_points": 80
+        }
+      }
+    },
+    {
+      "id": "body_cylinder_closed",
+      "title": "Closed cylinder body (3D)",
+      "description": "Watertight 3D body journey for closed-surface panel methods and volume-adjacent mesh work.",
+      "active_stages": ["geo"],
+      "stages": {
+        "geo": {
+          "type": "cylinder",
+          "mode": "3D",
+          "radius": 0.5,
+          "length": 2.0,
+          "segments": 48,
+          "rings": 12
+        }
+      }
+    }
+  ]
+}

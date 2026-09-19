@@ -1,0 +1,25 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenv & env
+venv/
+.venv/
+.env
+
+# Packaging
+*.egg-info/
+dist/
+build/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/

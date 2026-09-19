@@ -1,0 +1,97 @@
+{
+  "module": "geo",
+  "kind": "module_samples",
+  "samples": [
+    {
+      "id": "naca_0012",
+      "title": "NACA 0012 (Symmetric)",
+      "description": "Canonical symmetric 4-digit airfoil. Primary 2D unit sample for contour, TE closure, and chord scaling.",
+      "spec": {
+        "type": "naca",
+        "mode": "2D",
+        "code": "0012",
+        "chord": 1.0,
+        "num_points": 100
+      }
+    },
+    {
+      "id": "naca_4412",
+      "title": "NACA 4412 (Cambered)",
+      "description": "Cambered 4-digit airfoil for mean-line / thickness coupling checks.",
+      "spec": {
+        "type": "naca",
+        "mode": "2D",
+        "code": "4412",
+        "chord": 1.0,
+        "num_points": 100
+      }
+    },
+    {
+      "id": "flat_plate",
+      "title": "Flat Plate",
+      "description": "Thin closed 2D plate used as a degenerate-airfoil / zero-camber reference.",
+      "spec": {
+        "type": "flat_plate",
+        "mode": "2D",
+        "chord": 1.0,
+        "num_points": 100,
+        "thickness": 0.0
+      }
+    },
+    {
+      "id": "wing_rectangular",
+      "title": "Rectangular Wing",
+      "description": "Unswept, zero-dihedral extruded NACA 0012 skin (open root/tip).",
+      "spec": {
+        "type": "wing",
+        "mode": "3D",
+        "airfoil": "0012",
+        "chord": 1.0,
+        "span": 6.0,
+        "sweep_deg": 0.0,
+        "dihedral_deg": 0.0,
+        "num_sections": 20
+      }
+    },
+    {
+      "id": "wing_swept_drone",
+      "title": "Swept Drone Wing",
+      "description": "Cambered swept wing with dihedral for 3D skin / sweep displacement tests.",
+      "spec": {
+        "type": "wing",
+        "mode": "3D",
+        "airfoil": "4412",
+        "chord": 1.0,
+        "span": 5.0,
+        "sweep_deg": 25.0,
+        "dihedral_deg": 5.0,
+        "num_sections": 24
+      }
+    },
+    {
+      "id": "body_cylinder",
+      "title": "Sphere/Cylinder",
+      "description": "Closed cylindrical body with end caps; watertight 3D topology check.",
+      "spec": {
+        "type": "cylinder",
+        "mode": "3D",
+        "radius": 0.5,
+        "length": 2.0,
+        "segments": 48,
+        "rings": 12
+      }
+    },
+    {
+      "id": "svg_diamond_airfoil",
+      "title": "SVG Diamond Section",
+      "description": "File-import unit sample: simple closed SVG polygon (parser + 2D normalize path).",
+      "spec": {
+        "type": "file",
+        "mode": "2D",
+        "path": "modules/geo/files/diamond_section.svg",
+        "file_type": "svg",
+        "shape_name": "SVG_Diamond_Section"
+      }
+    }
+  ]
+}
