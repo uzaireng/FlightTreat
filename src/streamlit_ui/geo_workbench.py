@@ -23,6 +23,110 @@ from shared.dataset_catalog import (
 from shared.pipeline_runner import run_pipeline_case
 
 
+# Tall enough that a section fills a wide workbench column instead of a short strip.
+PLOT_HEIGHT_2D = 800
+
+# Wheel zoom is a Plotly config flag, not a layout attribute.
+PLOTLY_2D_CONFIG: Dict[str, Any] = {
+    "scrollZoom": True,
+    "displaylogo": False,
+    "doubleClick": "reset",
+}
+
+
+def _finite_xy(x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    xs = np.asarray(x, dtype=np.float64).ravel()
+    ys = np.asarray(y, dtype=np.float64).ravel()
+    ok = np.isfinite(xs) & np.isfinite(ys)
+    if not np.any(ok):
+        return (
+            np.array([0.0, 1.0], dtype=np.float64),
+            np.array([-0.5, 0.5], dtype=np.float64),
+        )
+    return xs[ok], ys[ok]
+
+
+def section_axis_ranges(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    margin_fraction: float = 0.18,
+    min_short_fraction: float = 0.55,
+) -> tuple[list[float], list[float]]:
+    """Default camera tight on the section outline.
+
+    Farfield nodes stay in the traces so the user can pan out to them.
+    The short axis is opened relative to the long axis so a thin airfoil
+    is not a hairline. That ratio is only the initial window: box zoom
+    is free because the axes are not scale-anchored.
+    """
+
+    xs, ys = _finite_xy(x, y)
+    xmin, xmax = float(np.min(xs)), float(np.max(xs))
+    ymin, ymax = float(np.min(ys)), float(np.max(ys))
+    x_span = max(xmax - xmin, 1e-9)
+    y_span = max(ymax - ymin, 1e-9)
+    long_span = max(x_span, y_span)
+    margin = margin_fraction * long_span
+
+    def _pad(span: float) -> float:
+        opened = min_short_fraction * long_span
+        return max(margin, 0.5 * (opened - span))
+
+    x_pad = _pad(x_span)
+    y_pad = _pad(y_span)
+    return [xmin - x_pad, xmax + x_pad], [ymin - y_pad, ymax + y_pad]
+
+
+def section_view_id(name: str, x: np.ndarray, y: np.ndarray) -> str:
+    """Identity of the outline, coarse enough that resampling does not move it.
+
+    Mesh sliders rebuild panels on the same section. Keeping this id fixed
+    lets Plotly retain pan and zoom across those reruns. A new chord or
+    shape changes the id and the camera returns to ``section_axis_ranges``.
+    """
+
+    xs, ys = _finite_xy(x, y)
+    span_x = float(np.max(xs) - np.min(xs))
+    span_y = float(np.max(ys) - np.min(ys))
+    return f"{name}|{span_x:.3g}|{span_y:.3g}"
+
+
+def apply_2d_plot_layout(
+    fig: go.Figure,
+    *,
+    x_range: list[float],
+    y_range: list[float],
+    view_id: str,
+    height: int = PLOT_HEIGHT_2D,
+) -> None:
+    """Pan by default, wheel-zoom ready, no fixed-aspect box zoom.
+
+    ``scaleanchor`` is intentionally unset. With it set, a horizontal zoom
+    box is stretched vertically to keep ``scaleratio``.
+    """
+
+    fig.update_layout(
+        dragmode="pan",
+        height=int(height),
+        autosize=True,
+        uirevision=view_id,
+        margin={"l": 56, "r": 28, "t": 72, "b": 48},
+    )
+    fig.update_xaxes(
+        range=[float(x_range[0]), float(x_range[1])],
+        autorange=False,
+        fixedrange=False,
+        uirevision=view_id,
+    )
+    fig.update_yaxes(
+        range=[float(y_range[0]), float(y_range[1])],
+        autorange=False,
+        fixedrange=False,
+        uirevision=view_id,
+    )
+
+
 def _bbox_caption(output: GeometryOutput) -> str:
     box = output["bounding_box"]
     return (
@@ -54,9 +158,14 @@ def figure_2d(output: GeometryOutput) -> go.Figure:
         xaxis_title="x",
         yaxis_title="y",
         template="plotly_white",
-        height=620,
     )
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    x_range, y_range = section_axis_ranges(points[:, 0], points[:, 1])
+    apply_2d_plot_layout(
+        fig,
+        x_range=x_range,
+        y_range=y_range,
+        view_id=section_view_id(output["shape_name"], points[:, 0], points[:, 1]),
+    )
     return fig
 
 
@@ -111,7 +220,13 @@ def render_geometry(output: GeometryOutput) -> None:
     st.caption(_bbox_caption(output))
 
     if output["mode"] == "2D":
-        st.plotly_chart(figure_2d(output), width="stretch")
+        st.plotly_chart(
+            figure_2d(output),
+            width="stretch",
+            height=PLOT_HEIGHT_2D,
+            config=PLOTLY_2D_CONFIG,
+            key="geo-section-2d",
+        )
         points = output["points_2d"]
         assert points is not None
         st.dataframe(
@@ -153,7 +268,7 @@ def _generate_from_sidebar(engine: GeometryEngine) -> Optional[GeometryOutput]:
             st.sidebar.caption(
                 "Live stages: "
                 + ", ".join(selected.active_stages)
-                + ". Later: math → physics → aero → ai (same case id)."
+                + ". Pending stages stay on this same case id."
             )
             if st.sidebar.button("Run pipeline", type="primary"):
                 result = run_pipeline_case(selected.id, engine=engine)

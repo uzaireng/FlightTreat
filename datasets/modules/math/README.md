@@ -1,7 +1,11 @@
 # math_module samples
 
-Placeholder. When Module 2 is integrated:
+Live catalog: `catalog.json`.
 
-1. Add `catalog.json` here with mesh-only unit fixtures (grids, masks, singular-mesh traps).
-2. Extend every case in `datasets/pipeline/catalog.json` with a `stages.math` block and append `"math"` to `active_stages`.
-3. Update `shared/pipeline_runner.py` to consume `GeometryOutput` from the geo stage.
+Fixtures cover cosine, half-cosine, and uniform 2D clustering, an imported SVG section, an open swept wing, a closed cylinder with outward and inward normals, and three guards that must fail:
+
+- farfield box that does not contain the airfoil (`InvalidMeshConfigError`)
+- a zero-area triangle (`DegeneratePanelError`)
+- `require_closed_3d` on an open wing (`OpenSurfaceError`)
+
+Pipeline cases in `datasets/pipeline/catalog.json` carry a `stages.math` payload and list `math` in `active_stages`. `shared.pipeline_runner.run_pipeline_case` runs geometry into `MeshEngine`. `run_math_module_sample` runs one fixture from this catalog.

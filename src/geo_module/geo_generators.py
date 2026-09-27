@@ -393,14 +393,17 @@ def generate_3d_parametric_wing(
 
     v01 = vertices[s, pn]
 
+    # axis=2 keeps (section, profile, vertex, xyz) so reshape(-1, 3, 3)
+    # is one triangle. axis=1 would group same-section points and point
+    # the normals along the span.
     tri_a = np.stack(
         (v00, v10, v11),
-        axis=1,
+        axis=2,
     )
 
     tri_b = np.stack(
         (v00, v11, v01),
-        axis=1,
+        axis=2,
     )
 
     facets = np.concatenate(

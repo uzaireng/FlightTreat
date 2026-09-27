@@ -26,8 +26,14 @@ from .geo_parsers import (
 )
 from .geo_skeleton import (
     BoundingBox,
+    CylinderGeneratorParams,
+    FlatPlateGeneratorParams,
+    GeometryEngineProtocol,
+    GeometryMode,
     GeometryOutput,
     GeometryOutputModel,
+    NACAGeneratorParams,
+    WingGeneratorParams,
     validate_geometry_output,
 )
 from .geometry_module import (
@@ -40,7 +46,11 @@ from .geometry_module import (
 
 __all__ = [
     "BoundingBox",
+    "CylinderGeneratorParams",
+    "FlatPlateGeneratorParams",
     "GeometryEngine",
+    "GeometryEngineProtocol",
+    "GeometryMode",
     "GeometryEngineError",
     "GeometryGenerationError",
     "GeometryInputError",
@@ -50,8 +60,10 @@ __all__ = [
     "GeometryProcessingError",
     "InvalidGeometryError",
     "InvalidGeometryInputError",
+    "NACAGeneratorParams",
     "NACAInput",
     "UnsupportedGeometryError",
+    "WingGeneratorParams",
     "WingInput",
     "generate_3d_parametric_wing",
     "generate_cylinder",

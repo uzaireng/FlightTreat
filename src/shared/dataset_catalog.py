@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PIPELINE_STAGE_ORDER: tuple[str, ...] = (
@@ -225,3 +225,85 @@ def pending_pipeline_stages(case: PipelineCase) -> tuple[str, ...]:
 
 def spec_as_dict(spec: GeometrySpec) -> Dict[str, Any]:
     return spec.model_dump(exclude_none=True)
+
+
+_MATH_SAMPLE_ERRORS: frozenset[str] = frozenset(
+    {
+        "InvalidMeshConfigError",
+        "DegeneratePanelError",
+        "MeshSingularityError",
+        "InvertedNormalError",
+        "OpenSurfaceError",
+    }
+)
+
+
+class MathSampleSpec(BaseModel):
+    """
+    One Module 2 fixture.
+
+    ``geometry`` is materialized by GeometryEngine. ``facets`` is a raw
+    triangle list for traps the geometry engine refuses to emit.
+    Exactly one of those sources is set. ``expect_error`` names the
+    MeshEngine exception a guard sample must raise.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    geometry: Optional[GeometrySpec] = None
+    facets: Optional[List[List[List[float]]]] = None
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    expect_error: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> MathSampleSpec:
+        if (self.geometry is None) == (self.facets is None):
+            raise ValueError("Math sample spec needs exactly one of geometry or facets.")
+        if self.expect_error is not None and self.expect_error not in _MATH_SAMPLE_ERRORS:
+            raise ValueError(
+                f"expect_error must be one of {sorted(_MATH_SAMPLE_ERRORS)}."
+            )
+        return self
+
+
+class MathModuleSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    spec: MathSampleSpec
+
+
+class MathModuleCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["math"]
+    kind: Literal["module_samples"]
+    samples: List[MathModuleSample]
+
+
+@lru_cache(maxsize=8)
+def load_math_module_catalog() -> MathModuleCatalog:
+    payload = _read_json(datasets_root() / "modules" / "math" / "catalog.json")
+    catalog = MathModuleCatalog.model_validate(payload)
+    ids = [sample.id for sample in catalog.samples]
+    if len(ids) != len(set(ids)):
+        raise DatasetCatalogError("math module sample ids must be unique.")
+    return catalog
+
+
+def list_math_module_samples() -> tuple[MathModuleSample, ...]:
+    return tuple(load_math_module_catalog().samples)
+
+
+def get_math_module_sample(name_or_id: str) -> MathModuleSample:
+    if not isinstance(name_or_id, str) or not name_or_id.strip():
+        raise DatasetCatalogError("Sample name must be a non-empty string.")
+
+    key = name_or_id.strip()
+    for sample in list_math_module_samples():
+        if sample.id == key or sample.title == key:
+            return sample
+
+    raise DatasetCatalogError(f"Unknown math module sample '{key}'.")

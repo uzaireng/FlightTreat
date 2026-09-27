@@ -19,7 +19,7 @@ Module 1 of the CFD SaaS pipeline. It generates or imports 2D airfoil/body curve
 | `generate_sample(name)` | Module-sample id or title from `datasets/modules/geo/` | `GeometryOutput` |
 | `generate_from_spec(spec)` | Catalog geometry spec (module or pipeline geo stage) | `GeometryOutput` |
 
-**Contract** (`geo_skeleton.py` — `GeometryOutput`):
+**Contract** (`geo_skeleton.py` — `GeometryOutput` + generator/parser signatures; auto-updated after Module 1 validation):
 
 - `mode`: `"2D"` or `"3D"`
 - `shape_name`: non-empty string
@@ -45,7 +45,7 @@ Runtime validation: `GeometryOutputModel` / `validate_geometry_output()`. Arrays
 ## Samples
 
 - **Module samples:** `datasets/modules/geo/catalog.json` (unit shapes + `files/diamond_section.svg`).
-- **Pipeline cases:** `datasets/pipeline/catalog.json` (stable real-user ids; geo is the only live stage).
+- **Pipeline cases:** `datasets/pipeline/catalog.json` (stable real-user ids; geo and math are the live stages).
 - Runner: `from shared.pipeline_runner import run_pipeline_case`
 
 ## Usage example
@@ -77,6 +77,7 @@ streamlit run src/streamlit_ui/app_geo.py
 - NACA codes must be four digits; cambered sections cannot have `p = 0`.
 - Closed TE thickness term uses `-0.1036 x^4` so `yt(1) = 0`.
 - 2D contours are closed by repeating the first vertex when needed.
+- Format-declared closed rings stay closed on import: an SVG `<polygon>`, an SVG path ending in `Z`, and a DXF polyline with group code 70 bit 1 all emit the repeating first vertex, so `is_closed=True` and Module 2 can panel them. An SVG `<polyline>` or an unflagged DXF polyline stays open.
 - Wing skins are **not** watertight (root/tip uncapped); cylinders **are**.
 - Imported 3D meshes are rejected unless watertight.
 - SVG Bézier/arc paths and binary DXF are rejected with typed errors.

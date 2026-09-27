@@ -17,6 +17,24 @@ import numpy as np
 _EPS = 1e-10
 
 
+def _close_ring(points: np.ndarray) -> np.ndarray:
+    """Append the first vertex so a format-declared closed ring stays closed.
+
+    SVG ``<polygon>`` and DXF polylines with the closed flag imply the final
+    edge back to the start. Module 2 panelization needs that edge to exist.
+    """
+
+    ring = np.asarray(points, dtype=np.float64)
+
+    if ring.shape[0] < 3:
+        return ring
+
+    if np.linalg.norm(ring[0] - ring[-1]) <= _EPS:
+        return ring
+
+    return np.vstack((ring, ring[:1]))
+
+
 class GeometryParseError(ValueError):
     """Raised when a geometry file cannot be parsed safely."""
 
@@ -393,7 +411,7 @@ def _parse_svg(content: bytes) -> np.ndarray:
 
             if values.size:
                 points.append(
-                    values.reshape(-1, 2)
+                    _close_ring(values.reshape(-1, 2))
                 )
 
         elif tag == "line":
@@ -427,6 +445,15 @@ def _parse_svg(content: bytes) -> np.ndarray:
 # ============================================================================
 # DXF
 # ============================================================================
+
+def _dxf_closed_flag(value: str) -> bool:
+    try:
+        return bool(int(float(value)) & 1)
+    except ValueError as exc:
+        raise GeometryParseError(
+            "DXF polyline flag (group code 70) is not an integer."
+        ) from exc
+
 
 def _parse_dxf(content: bytes) -> np.ndarray:
     """
@@ -488,6 +515,7 @@ def _parse_dxf(content: bytes) -> np.ndarray:
     y = None
 
     polyline_points: List[Tuple[float, float]] = []
+    polyline_closed = False
 
     for code, value in pairs:
         if code == "0":
@@ -514,8 +542,16 @@ def _parse_dxf(content: bytes) -> np.ndarray:
             elif code == "20":
                 y = float(value)
 
+        elif entity == "POLYLINE":
+            # The POLYLINE header carries only a dummy 10/20 point; vertices
+            # arrive as separate VERTEX entities. Group code 70 bit 1 = closed.
+            if code == "70":
+                polyline_closed = polyline_closed or _dxf_closed_flag(value)
+
         elif entity == "LWPOLYLINE":
-            if code == "10":
+            if code == "70":
+                polyline_closed = polyline_closed or _dxf_closed_flag(value)
+            elif code == "10":
                 x = float(value)
             elif code == "20":
                 y = float(value)
@@ -546,9 +582,12 @@ def _parse_dxf(content: bytes) -> np.ndarray:
             "DXF contains insufficient supported 2D geometry."
         )
 
-    return _normalize_2d(
-        np.asarray(points, dtype=np.float64)
-    )
+    contour = np.asarray(points, dtype=np.float64)
+
+    if polyline_closed:
+        contour = _close_ring(contour)
+
+    return _normalize_2d(contour)
 
 
 # ============================================================================

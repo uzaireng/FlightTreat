@@ -1,5 +1,8 @@
 # Byte-compiled / caches
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
 *.py[cod]
 *$py.class
 .pytest_cache/
@@ -9,17 +12,24 @@ __pycache__/
 # Virtualenv & env
 venv/
 .venv/
+env/
+ENV/
 .env
 
-# Packaging
+# Packaging / build artifacts
 *.egg-info/
 dist/
 build/
 
-# Streamlit
-.streamlit/secrets.toml
+# Streamlit local state
+.streamlit/
+*.log
 
-# OS / IDE
+# OS
 .DS_Store
 Thumbs.db
+
+# IDE / editor
+.cursor/
+.vscode/
 .idea/

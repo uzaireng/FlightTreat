@@ -1,0 +1,221 @@
+{
+  "module": "math",
+  "kind": "module_samples",
+  "samples": [
+    {
+      "id": "naca0012_cosine",
+      "title": "NACA 0012 cosine panels",
+      "description": "Symmetric section with cosine clustering at the leading and trailing edges, plus a Cartesian farfield mask.",
+      "spec": {
+        "geometry": {
+          "type": "naca",
+          "mode": "2D",
+          "code": "0012",
+          "chord": 1.0,
+          "num_points": 120
+        },
+        "parameters": {
+          "n_panels": 80,
+          "n_x": 64,
+          "n_y": 40,
+          "clustering": "cosine",
+          "le_cluster_factor": 1.0,
+          "te_cluster_factor": 1.0
+        }
+      }
+    },
+    {
+      "id": "naca4412_half_cosine",
+      "title": "NACA 4412 half-cosine IBL",
+      "description": "Cambered section. Half-cosine packs the leading edge only and the IBL split must keep the upper surface above the lower surface.",
+      "spec": {
+        "geometry": {
+          "type": "naca",
+          "mode": "2D",
+          "code": "4412",
+          "chord": 1.0,
+          "num_points": 120
+        },
+        "parameters": {
+          "n_panels": 64,
+          "n_x": 48,
+          "n_y": 32,
+          "clustering": "half_cosine",
+          "le_cluster_factor": 2.0,
+          "te_cluster_factor": 0.0
+        }
+      }
+    },
+    {
+      "id": "flat_plate_uniform",
+      "title": "Flat plate uniform panels",
+      "description": "Thin closed plate with uniform panel spacing. Clustering must not collapse the leading or trailing edge.",
+      "spec": {
+        "geometry": {
+          "type": "flat_plate",
+          "mode": "2D",
+          "chord": 1.0,
+          "num_points": 80,
+          "thickness": 0.0
+        },
+        "parameters": {
+          "n_panels": 40,
+          "n_x": 32,
+          "n_y": 24,
+          "clustering": "uniform",
+          "le_cluster_factor": 0.0,
+          "te_cluster_factor": 0.0
+        }
+      }
+    },
+    {
+      "id": "svg_section_panels",
+      "title": "Imported SVG section panels",
+      "description": "Closed SVG polygon from Module 1. Straight-edged sections must still panel cleanly and split into upper/lower IBL branches.",
+      "spec": {
+        "geometry": {
+          "type": "file",
+          "mode": "2D",
+          "path": "modules/geo/files/diamond_section.svg",
+          "file_type": "svg",
+          "shape_name": "SVG_Diamond_Section"
+        },
+        "parameters": {
+          "n_panels": 64,
+          "n_x": 48,
+          "n_y": 32,
+          "clustering": "half_cosine",
+          "le_cluster_factor": 2.0,
+          "te_cluster_factor": 1.0
+        }
+      }
+    },
+    {
+      "id": "wing_open_skin",
+      "title": "Open swept-wing skin",
+      "description": "Uncapped 3D wing. Panel metrics are required and the skin must stay open.",
+      "spec": {
+        "geometry": {
+          "type": "wing",
+          "mode": "3D",
+          "airfoil": "4412",
+          "chord": 1.0,
+          "span": 4.0,
+          "sweep_deg": 20.0,
+          "dihedral_deg": 4.0,
+          "num_sections": 8,
+          "airfoil_points": 32
+        },
+        "parameters": {
+          "normal_orientation": "outward",
+          "require_closed_3d": false
+        }
+      }
+    },
+    {
+      "id": "cylinder_outward",
+      "title": "Closed cylinder outward normals",
+      "description": "Watertight cylinder. Every unit normal must leave the body and match the stored winding.",
+      "spec": {
+        "geometry": {
+          "type": "cylinder",
+          "mode": "3D",
+          "radius": 0.5,
+          "length": 2.0,
+          "segments": 16,
+          "rings": 4
+        },
+        "parameters": {
+          "normal_orientation": "outward",
+          "require_closed_3d": true
+        }
+      }
+    },
+    {
+      "id": "cylinder_inward",
+      "title": "Closed cylinder inward normals",
+      "description": "Same watertight cylinder with the normal orientation reversed. Normals must point into the body.",
+      "spec": {
+        "geometry": {
+          "type": "cylinder",
+          "mode": "3D",
+          "radius": 0.5,
+          "length": 2.0,
+          "segments": 16,
+          "rings": 4
+        },
+        "parameters": {
+          "normal_orientation": "inward",
+          "require_closed_3d": true
+        }
+      }
+    },
+    {
+      "id": "domain_too_small",
+      "title": "Farfield does not contain the airfoil",
+      "description": "Chord-relative box that does not strictly contain the section. Must raise InvalidMeshConfigError.",
+      "spec": {
+        "geometry": {
+          "type": "naca",
+          "mode": "2D",
+          "code": "0012",
+          "chord": 1.0,
+          "num_points": 40
+        },
+        "parameters": {
+          "n_panels": 24,
+          "n_x": 16,
+          "n_y": 12,
+          "domain": {
+            "x_min": 0.0,
+            "x_max": 0.2,
+            "y_min": -0.1,
+            "y_max": 0.1
+          }
+        },
+        "expect_error": "InvalidMeshConfigError"
+      }
+    },
+    {
+      "id": "degenerate_triangle",
+      "title": "Zero-area triangle",
+      "description": "Collinear triangle the geometry engine will not emit. Must raise DegeneratePanelError.",
+      "spec": {
+        "facets": [
+          [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0]
+          ]
+        ],
+        "parameters": {
+          "min_panel_area": 1e-14
+        },
+        "expect_error": "DegeneratePanelError"
+      }
+    },
+    {
+      "id": "wing_require_closed",
+      "title": "Open wing rejected as closed body",
+      "description": "require_closed_3d on an uncapped wing skin. Must raise OpenSurfaceError.",
+      "spec": {
+        "geometry": {
+          "type": "wing",
+          "mode": "3D",
+          "airfoil": "0012",
+          "chord": 1.0,
+          "span": 2.0,
+          "sweep_deg": 0.0,
+          "dihedral_deg": 0.0,
+          "num_sections": 4,
+          "airfoil_points": 24
+        },
+        "parameters": {
+          "require_closed_3d": true,
+          "normal_orientation": "outward"
+        },
+        "expect_error": "OpenSurfaceError"
+      }
+    }
+  ]
+}
