@@ -1,9 +1,9 @@
 """
 End-to-end pipeline sample runner.
 
-Live stages: geo → math. Physics, aero, and AI contracts exist
-(`physics_skeleton`, `aero_skeleton`). When those implementations land,
-extend `run_pipeline_case` so the same case ids keep flowing
+Live stages: geo → math → physics. Aero and AI contracts exist
+(`aero_skeleton`). When those implementations land, extend
+`run_pipeline_case` so the same case ids keep flowing
 GeometryOutput → MeshOutput → PhysicsOutput → AeroOutput → AIOutput.
 """
 
@@ -19,13 +19,16 @@ from geo_module.geo_skeleton import GeometryOutput, validate_geometry_output
 from geo_module.geometry_module import GeometryEngine, GeometryEngineError
 from math_module.math_skeleton import InvalidMeshConfigError, MeshEngineError, MeshOutput
 from math_module.mesh_engine import MeshEngine
-from physics_module.physics_skeleton import PhysicsOutput
+from physics_module.physics_engine import PhysicsEngine, split_flow_payload
+from physics_module.physics_skeleton import PhysicsEngineError, PhysicsOutput
 
 from .dataset_catalog import (
     DatasetCatalogError,
     MathModuleSample,
+    PhysicsModuleSample,
     PipelineCase,
     get_math_module_sample,
+    get_physics_module_sample,
     get_pipeline_case,
     pending_pipeline_stages,
     spec_as_dict,
@@ -119,16 +122,20 @@ def run_pipeline_case(
     *,
     engine: Optional[GeometryEngine] = None,
     mesh_engine: Optional[MeshEngine] = None,
+    physics_engine: Optional[PhysicsEngine] = None,
     math_overrides: Optional[Dict[str, Any]] = None,
+    physics_overrides: Optional[Dict[str, Any]] = None,
 ) -> PipelineRunResult:
     """
     Execute every *currently implemented* stage of a pipeline case.
 
     Downstream modules must append here; they must not fork a second
     catalog of user journeys. Geometry arrays are copied before meshing.
+    The mesh is copied again before the panel solve.
 
     ``math_overrides`` layers user-tuned meshing parameters on top of the
-    stored ``stages.math`` payload. The catalog file is never mutated.
+    stored ``stages.math`` payload. ``physics_overrides`` does the same for
+    ``stages.physics``. The catalog file is never mutated.
     """
 
     try:
@@ -164,6 +171,28 @@ def run_pipeline_case(
         math_seconds = time.perf_counter() - started
         executed.append("math")
 
+    physics_output: Optional[PhysicsOutput] = None
+    physics_seconds: Optional[float] = None
+    if "physics" in case.active_stages:
+        if math_output is None:
+            raise GeometryEngineError(
+                f"Pipeline case '{case.id}' activates physics without a mesh."
+            )
+        if case.stages.physics is None:
+            raise GeometryEngineError(
+                f"Pipeline case '{case.id}' activates physics without a stages.physics payload."
+            )
+        payload = dict(case.stages.physics)
+        if physics_overrides:
+            payload.update(physics_overrides)
+        freestream, parameters = split_flow_payload(payload)
+        started = time.perf_counter()
+        physics_output = (
+            physics_engine if physics_engine is not None else PhysicsEngine()
+        ).solve_from_mesh(math_output, freestream, parameters)
+        physics_seconds = time.perf_counter() - started
+        executed.append("physics")
+
     pending = list(pending_pipeline_stages(case))
     notes: Dict[str, Any] = {
         "executed": executed,
@@ -171,8 +200,12 @@ def run_pipeline_case(
     }
     if math_seconds is not None:
         notes["math_seconds"] = math_seconds
+    if physics_seconds is not None:
+        notes["physics_seconds"] = physics_seconds
     if math_overrides:
         notes["math_overrides"] = sorted(math_overrides)
+    if physics_overrides:
+        notes["physics_overrides"] = sorted(physics_overrides)
     if case.stages.math is not None and "math" not in executed:
         notes["math_spec_present"] = True
     if pending:
@@ -186,7 +219,7 @@ def run_pipeline_case(
         pending_stages=pending,
         geo=geo_output,
         math=math_output,
-        physics=None,
+        physics=physics_output,
         aero=None,
         ai=None,
         notes=notes,
@@ -269,5 +302,114 @@ def run_math_module_sample(
         math=mesh_output,
         error_type=error_type,
         error_message=error_message,
+        seconds=time.perf_counter() - started,
+    )
+
+
+class PhysicsSampleRun(TypedDict):
+    sample_id: str
+    title: str
+    description: str
+    expect_error: Optional[str]
+    error_type: Optional[str]
+    error_message: Optional[str]
+    cl: Optional[float]
+    theta_ratio: Optional[float]
+    seconds: float
+
+
+def _small_airfoil_panel():
+    """A short NACA 0012 panel set for solver-only fixtures."""
+
+    from math_module.mesh_engine import MeshEngine
+
+    geometry = GeometryEngine().generate_from_spec(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80}
+    )
+    mesh = MeshEngine().from_geometry(
+        geometry,
+        {"n_panels": 48, "n_x": 24, "n_y": 16, "clustering": "cosine"},
+    )
+    panel = mesh["panel_2d"]
+    if panel is None:
+        raise GeometryEngineError("NACA fixture did not produce panels.")
+    return mesh, panel
+
+
+def run_physics_module_sample(name_or_id: str) -> PhysicsSampleRun:
+    """Run one solver-only physics fixture.
+
+    Guard samples must raise the stored exception. Numeric samples return
+    lift or a Blasius thickness ratio.
+    """
+
+    from physics_module.boundary_layer_1d import _thwaites_side
+    from physics_module.solver_2d import solve_2d
+
+    try:
+        sample: PhysicsModuleSample = get_physics_module_sample(name_or_id)
+    except DatasetCatalogError as exc:
+        raise GeometryEngineError(str(exc)) from exc
+
+    started = time.perf_counter()
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+    cl: Optional[float] = None
+    theta_ratio: Optional[float] = None
+    kind = sample.spec.kind
+    try:
+        if kind == "bad_te_index":
+            _mesh, panel = _small_airfoil_panel()
+            broken = dict(panel)
+            broken["te_index"] = -3
+            solve_2d(broken, 0.0, None, "vortex", True)
+        elif kind == "singular_collocation":
+            _mesh, panel = _small_airfoil_panel()
+            broken = dict(panel)
+            collocation = np.array(panel["collocation"], dtype=np.float64, copy=True)
+            broken["collocation"] = np.repeat(collocation[:1], collocation.shape[0], axis=0)
+            solve_2d(broken, 0.0, None, "vortex", True)
+        elif kind == "thwaites_blasius":
+            arc = np.linspace(0.0, 1.0, 81)
+            speed = np.ones(arc.shape, dtype=np.float64)
+            nu = 1.0e-5
+            theta, _shape, _cf, _lam, _delta = _thwaites_side(arc, speed, nu)
+            target = np.sqrt(0.45 * nu * arc[1:] / speed[1:])
+            theta_ratio = float(np.max(np.abs(theta[1:] - target) / target))
+        elif kind == "naca_alpha0":
+            mesh, _panel = _small_airfoil_panel()
+            solved = PhysicsEngine().solve_from_mesh(
+                mesh,
+                {"alpha_deg": 0.0, "reynolds": 5.0e5, "mach": 0.0, "v_inf": 1.0, "rho": 1.225},
+                {"regime": "inviscid"},
+            )
+            cl = float(solved["loads"]["cl"])
+        else:
+            raise GeometryEngineError(f"Unknown physics sample kind {kind!r}.")
+    except PhysicsEngineError as exc:
+        error_type = type(exc).__name__
+        error_message = str(exc)
+        if sample.spec.expect_error is None:
+            raise
+        if error_type != sample.spec.expect_error:
+            raise PhysicsEngineError(
+                f"Sample '{sample.id}' expected {sample.spec.expect_error}, "
+                f"raised {error_type}: {exc}"
+            ) from exc
+    else:
+        if sample.spec.expect_error is not None:
+            raise PhysicsEngineError(
+                f"Sample '{sample.id}' expected {sample.spec.expect_error} but succeeded."
+            )
+
+    return PhysicsSampleRun(
+        sample_id=sample.id,
+        title=sample.title,
+        description=sample.description,
+        expect_error=sample.spec.expect_error,
+        error_type=error_type,
+        error_message=error_message,
+        cl=cl,
+        theta_ratio=theta_ratio,
         seconds=time.perf_counter() - started,
     )

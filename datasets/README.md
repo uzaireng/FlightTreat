@@ -10,7 +10,7 @@ Isolated fixtures for one engine (unit tests + single-module workbench).
 |---|---|
 | `modules/geo/` | Live catalog + SVG file fixture |
 | `modules/math/` | Live catalog: clustering, open wing, closed cylinder, and guard failures |
-| `modules/physics/` | Placeholder |
+| `modules/physics/` | Solver fixtures (singular matrix, Kutta, Thwaites, attached NACA) |
 | `modules/aero/` | Placeholder |
 | `modules/ai/` | Placeholder |
 
@@ -18,7 +18,9 @@ Isolated fixtures for one engine (unit tests + single-module workbench).
 
 Real-user journeys. The **same case id** is reused as each downstream module is integrated (`geo` → `math` → `physics` → `aero` → `ai`).
 
-Current live stages: **geo → math**. `active_stages` will grow; do not create a second set of user-journey names per module.
+Current live stages: **geo → math → physics**. `active_stages` will grow when aero and AI land; do not create a second set of user-journey names per module.
+
+Each pipeline case carries `stages.physics` (`alpha_deg`, `reynolds`, `mach`, `v_inf`, `rho`, `regime`). `run_pipeline_case` solves that payload. `physics_overrides` merges on top and does not rewrite the catalog.
 
 | Case id | Journey | Geometry source |
 |---|---|---|

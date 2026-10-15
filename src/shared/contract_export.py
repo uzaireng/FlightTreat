@@ -21,6 +21,7 @@ import numpy as np
 
 from geo_module.geo_skeleton import GeometryOutput
 from math_module.math_skeleton import BoundaryRegion, MeshOutput
+from physics_module.physics_skeleton import PhysicsOutput
 
 
 _REGION_NAME: Dict[int, str] = {int(region): region.name for region in BoundaryRegion}
@@ -147,23 +148,48 @@ def _mesh_section(mesh: MeshOutput) -> Dict[str, Any]:
     return section
 
 
+def _physics_section(physics: PhysicsOutput) -> Dict[str, Any]:
+    cp = np.asarray(physics["inviscid"]["cp_inviscid"])
+    field = physics["field_2d"]
+    return {
+        "mode": physics["mode"],
+        "regime": physics["regime"],
+        "converged": bool(physics["converged"]),
+        "vic_iterations": int(physics["vic_iterations"]),
+        "residual": float(physics["residual"]),
+        "cl": float(physics["loads"]["cl"]),
+        "cd": float(physics["loads"]["cd"]),
+        "cp_shape": [int(cp.shape[0])],
+        "field_shape": None if field is None else [int(field["u"].shape[0]), int(field["u"].shape[1])],
+        "warnings": list(physics["warnings"]),
+    }
+
+
 def contract_summary(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
     *,
     label: str = "run",
     notes: Optional[Dict[str, Any]] = None,
+    physics: Optional[PhysicsOutput] = None,
 ) -> Dict[str, Any]:
     """JSON-safe description of every live stage contract in one run."""
 
+    pending = ["physics", "aero", "ai"]
+    if physics is not None:
+        pending = ["aero", "ai"]
     summary: Dict[str, Any] = {
         "label": label,
         "live_stages": [
             name
-            for name, present in (("geo", geometry is not None), ("math", mesh is not None))
+            for name, present in (
+                ("geo", geometry is not None),
+                ("math", mesh is not None),
+                ("physics", physics is not None),
+            )
             if present
         ],
-        "pending_stages": ["physics", "aero", "ai"],
+        "pending_stages": pending,
     }
     if notes:
         summary["notes"] = json.loads(json.dumps(notes, default=str))
@@ -171,6 +197,8 @@ def contract_summary(
         summary["geo"] = _geometry_section(geometry)
     if mesh is not None:
         summary["math"] = _mesh_section(mesh)
+    if physics is not None:
+        summary["physics"] = _physics_section(physics)
     return summary
 
 
@@ -180,9 +208,10 @@ def contract_summary_json(
     *,
     label: str = "run",
     notes: Optional[Dict[str, Any]] = None,
+    physics: Optional[PhysicsOutput] = None,
 ) -> str:
     return json.dumps(
-        contract_summary(geometry, mesh, label=label, notes=notes),
+        contract_summary(geometry, mesh, label=label, notes=notes, physics=physics),
         indent=2,
         sort_keys=False,
     )
@@ -191,6 +220,7 @@ def contract_summary_json(
 def contract_arrays(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
+    physics: Optional[PhysicsOutput] = None,
 ) -> Dict[str, np.ndarray]:
     """Every raw contract array, namespaced ``<stage>_<block>_<field>``."""
 
@@ -211,15 +241,29 @@ def contract_arrays(
                 if isinstance(value, np.ndarray):
                     arrays[f"math_{block}_{field}"] = value
 
+    if physics is not None:
+        inviscid = physics["inviscid"]
+        for field in ("gamma", "mu", "sigma", "cp_inviscid", "v_tangential"):
+            value = inviscid[field]  # type: ignore[literal-required]
+            if isinstance(value, np.ndarray):
+                arrays[f"physics_inviscid_{field}"] = value
+        if isinstance(physics["surface_velocity"], np.ndarray):
+            arrays["physics_surface_velocity"] = physics["surface_velocity"]
+        field_2d = physics["field_2d"]
+        if field_2d is not None:
+            for name in ("u", "v", "w", "speed", "cp", "phi", "psi"):
+                arrays[f"physics_field_{name}"] = np.asarray(field_2d[name])  # type: ignore[literal-required]
+
     return arrays
 
 
 def contract_npz_bytes(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
+    physics: Optional[PhysicsOutput] = None,
 ) -> bytes:
     """Compressed ``.npz`` of every contract array, ready for download."""
 
     buffer = io.BytesIO()
-    np.savez_compressed(buffer, **contract_arrays(geometry, mesh))
+    np.savez_compressed(buffer, **contract_arrays(geometry, mesh, physics))
     return buffer.getvalue()

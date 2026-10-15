@@ -5,7 +5,11 @@
       "id": "airfoil_naca_0012_cruise",
       "title": "NACA 0012 cruise (2D)",
       "description": "Primary real-user 2D journey. Live: geometry and cosine vortex panels with a Cartesian farfield and IBL stations. Later: potential/panel solve, CL/CD/CM, AI insight, using this same case id.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "naca",
@@ -21,6 +25,14 @@
           "clustering": "cosine",
           "le_cluster_factor": 1.0,
           "te_cluster_factor": 1.0
+        },
+        "physics": {
+          "alpha_deg": 4.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "viscous_inviscid"
         }
       }
     },
@@ -28,7 +40,11 @@
       "id": "airfoil_naca_4412_cruise",
       "title": "NACA 4412 cruise (2D)",
       "description": "Cambered 2D journey. Live: geometry plus cosine panels and upper/lower IBL stations for non-zero lift once physics is online.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "naca",
@@ -44,6 +60,14 @@
           "clustering": "cosine",
           "le_cluster_factor": 1.0,
           "te_cluster_factor": 1.0
+        },
+        "physics": {
+          "alpha_deg": 2.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "viscous_inviscid"
         }
       }
     },
@@ -51,7 +75,11 @@
       "id": "plate_flat_thin_reference",
       "title": "Thin flat plate reference (2D)",
       "description": "Zero-camber validation journey. Uniform panels keep the analytic 2\u03c0\u03b1 thin-airfoil reference clean once the physics solve lands on this same case id.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "flat_plate",
@@ -67,6 +95,14 @@
           "clustering": "uniform",
           "le_cluster_factor": 0.0,
           "te_cluster_factor": 0.0
+        },
+        "physics": {
+          "alpha_deg": 4.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "inviscid"
         }
       }
     },
@@ -74,7 +110,11 @@
       "id": "section_svg_import_2d",
       "title": "Imported SVG section (2D)",
       "description": "Customer-upload journey. A closed SVG polygon is parsed by Module 1, normalized to unit chord, then panelled with leading-edge packing by Module 2.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "file",
@@ -90,6 +130,14 @@
           "clustering": "half_cosine",
           "le_cluster_factor": 2.0,
           "te_cluster_factor": 1.0
+        },
+        "physics": {
+          "alpha_deg": 0.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "viscous_inviscid"
         }
       }
     },
@@ -97,7 +145,11 @@
       "id": "wing_rect_uav_cruise",
       "title": "Rectangular UAV wing (3D)",
       "description": "Unswept, zero-dihedral lifting surface. The simplest 3D journey for checking panel counts, areas, and outward normals before sweep effects enter.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "wing",
@@ -113,6 +165,14 @@
         "math": {
           "normal_orientation": "outward",
           "require_closed_3d": false
+        },
+        "physics": {
+          "alpha_deg": 4.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "inviscid"
         }
       }
     },
@@ -120,7 +180,11 @@
       "id": "wing_swept_drone_cruise",
       "title": "Swept drone wing (3D)",
       "description": "3D lifting-surface journey. Geometry is an open wing skin; the mesh stage panels that skin without requiring a watertight volume.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "wing",
@@ -136,6 +200,14 @@
         "math": {
           "normal_orientation": "outward",
           "require_closed_3d": false
+        },
+        "physics": {
+          "alpha_deg": 4.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "inviscid"
         }
       }
     },
@@ -143,7 +215,11 @@
       "id": "body_cylinder_closed",
       "title": "Closed cylinder body (3D)",
       "description": "Watertight 3D body. The mesh stage keeps the surface closed and orients unit normals outward.",
-      "active_stages": ["geo", "math"],
+      "active_stages": [
+        "geo",
+        "math",
+        "physics"
+      ],
       "stages": {
         "geo": {
           "type": "cylinder",
@@ -156,6 +232,14 @@
         "math": {
           "normal_orientation": "outward",
           "require_closed_3d": true
+        },
+        "physics": {
+          "alpha_deg": 0.0,
+          "reynolds": 500000.0,
+          "mach": 0.0,
+          "v_inf": 1.0,
+          "rho": 1.225,
+          "regime": "inviscid"
         }
       }
     }

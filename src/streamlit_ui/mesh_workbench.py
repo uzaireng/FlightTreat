@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from geo_module import GeometryEngine, GeometryEngineError, GeometryOutput
 from math_module import BoundaryRegion, MeshEngine, MeshEngineError, MeshOutput
+from physics_module import PhysicsEngine, PhysicsEngineError
+from physics_module.physics_engine import split_flow_payload
 from shared.contract_export import contract_npz_bytes, contract_summary_json
 from shared.dataset_catalog import (
     DatasetCatalogError,
@@ -880,12 +882,16 @@ def _store_run(
     meta: Optional[Dict[str, Any]],
     error: Optional[str],
     expect_error: Optional[str],
+    physics: Any = None,
+    physics_error: Optional[str] = None,
 ) -> None:
     st.session_state["mesh_geo"] = geo
     st.session_state["mesh_out"] = mesh
     st.session_state["mesh_meta"] = meta
     st.session_state["mesh_error"] = error
     st.session_state["mesh_expect"] = expect_error
+    st.session_state["physics_out"] = physics
+    st.session_state["physics_error"] = physics_error
 
 
 def _geo_deltas(
@@ -931,11 +937,100 @@ def _apply_geo_overrides(
     return _cached_geometry(cache_key, _build)
 
 
+def _flow_seed(active: _ActiveGeometry) -> tuple[float, float, float, str]:
+    """Catalog freestream when the case has one, otherwise a mode default."""
+
+    stored = dict(active.meta.get("flow") or {})
+    closed = False
+    if active.geometry is not None:
+        closed = bool(active.geometry["is_closed"])
+    elif active.geo_spec is not None and active.geo_spec.get("type") == "cylinder":
+        closed = True
+    alpha = float(stored.get("alpha_deg", 0.0 if closed and active.mode == "3D" else 4.0))
+    reynolds = float(stored.get("reynolds", 5.0e5))
+    mach = float(stored.get("mach", 0.0))
+    regime = stored.get("regime")
+    if regime not in ("inviscid", "viscous_inviscid"):
+        regime = "inviscid" if active.mode == "3D" else "viscous_inviscid"
+    return alpha, reynolds, mach, str(regime)
+
+
+def _flow_knobs(active: _ActiveGeometry) -> Dict[str, Any]:
+    """Sidebar freestream. Keys are scoped so a mesh slider is never reused."""
+
+    st.sidebar.header("Flow conditions")
+    alpha, reynolds, mach, regime = _flow_seed(active)
+    scope = active.scope
+    alpha_key = f"{scope}_alpha"
+    log_key = f"{scope}_log_re"
+    mach_key = f"{scope}_mach"
+    regime_key = f"{scope}_regime"
+    alpha_value = float(
+        st.sidebar.slider(
+            "Angle of attack α (deg)",
+            min_value=-12.0,
+            max_value=16.0,
+            step=0.5,
+            key=alpha_key,
+            **_unless_set(alpha_key, value=float(np.clip(alpha, -12.0, 16.0))),
+        )
+    )
+    log_seed = float(np.clip(np.log10(max(reynolds, 1.0)), 4.0, 7.0))
+    log_re = float(
+        st.sidebar.slider(
+            "Reynolds number (log10)",
+            min_value=4.0,
+            max_value=7.0,
+            step=0.05,
+            key=log_key,
+            **_unless_set(log_key, value=log_seed),
+        )
+    )
+    mach_value = float(
+        st.sidebar.slider(
+            "Mach",
+            min_value=0.0,
+            max_value=0.65,
+            step=0.05,
+            key=mach_key,
+            **_unless_set(mach_key, value=float(np.clip(mach, 0.0, 0.65))),
+        )
+    )
+    choices = ("inviscid", "viscous_inviscid")
+    regime_value = st.sidebar.selectbox(
+        "Regime",
+        choices,
+        key=regime_key,
+        **_unless_set(regime_key, index=choices.index(regime)),
+    )
+    return {
+        "alpha_deg": alpha_value,
+        "reynolds": float(10.0 ** log_re),
+        "mach": mach_value,
+        "v_inf": 1.0,
+        "rho": 1.225,
+        "regime": str(regime_value),
+    }
+
+
+def _solve_flow(mesh: MeshOutput, flow: Dict[str, Any]) -> tuple[Any, Optional[str], float]:
+    """Run Module 3. A solver error stays on the page and keeps the mesh."""
+
+    freestream, parameters = split_flow_payload(flow)
+    started = time.perf_counter()
+    try:
+        solved = PhysicsEngine().solve_from_mesh(mesh, freestream, parameters)
+    except (PhysicsEngineError, ValueError) as exc:
+        return None, str(exc), time.perf_counter() - started
+    return solved, None, time.perf_counter() - started
+
+
 def _publish_mesh(
     mesh_engine: MeshEngine,
     active: _ActiveGeometry,
     knobs: Dict[str, Any],
     geo_tuned: Optional[list[str]] = None,
+    flow: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Layer the live slider values on the catalog params and discretize."""
 
@@ -955,6 +1050,25 @@ def _publish_mesh(
         notes["math_overrides"] = overrides
     else:
         notes.pop("math_overrides", None)
+    physics = None
+    physics_error = None
+    if flow is not None:
+        physics, physics_error, physics_seconds = _solve_flow(mesh, flow)
+        notes["physics_seconds"] = physics_seconds
+        seed_alpha, seed_re, seed_mach, seed_regime = _flow_seed(active)
+        tuned_flow = []
+        if abs(float(flow["alpha_deg"]) - seed_alpha) > 1e-9:
+            tuned_flow.append("alpha_deg")
+        if abs(np.log10(float(flow["reynolds"])) - np.log10(seed_re)) > 0.02:
+            tuned_flow.append("reynolds")
+        if abs(float(flow["mach"]) - seed_mach) > 1e-9:
+            tuned_flow.append("mach")
+        if str(flow["regime"]) != seed_regime:
+            tuned_flow.append("regime")
+        if tuned_flow:
+            notes["physics_overrides"] = tuned_flow
+        else:
+            notes.pop("physics_overrides", None)
     meta = dict(active.meta)
     meta["notes"] = notes
     if meta.get("kind") == "math_sample":
@@ -965,6 +1079,8 @@ def _publish_mesh(
         meta=meta,
         error=None,
         expect_error=None,
+        physics=physics,
+        physics_error=physics_error,
     )
 
 
@@ -1001,6 +1117,7 @@ def _resolve_pipeline(engine: GeometryEngine) -> _ActiveGeometry:
             "active_stages": list(selected.active_stages),
             "pending_stages": list(pending_pipeline_stages(selected)),
             "notes": {},
+            "flow": dict(selected.stages.physics or {}),
         },
     )
 
@@ -1134,6 +1251,7 @@ def _run_from_sidebar(engine: GeometryEngine, mesh_engine: MeshEngine) -> None:
             active,
             knobs,
             geo_tuned=_geo_deltas(active.geo_spec, geo_overrides),
+            flow=_flow_knobs(active),
         )
     except (GeometryEngineError, MeshEngineError, DatasetCatalogError, ValidationError) as exc:
         st.sidebar.error(str(exc))
@@ -1150,7 +1268,11 @@ def render_contracts(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> No
     meta = st.session_state.get("mesh_meta") or {}
     label = str(meta.get("case_id") or meta.get("sample_id") or meta.get("title") or "run")
     summary = contract_summary_json(
-        geometry, mesh, label=label, notes=meta.get("notes")
+        geometry,
+        mesh,
+        label=label,
+        notes=meta.get("notes"),
+        physics=st.session_state.get("physics_out"),
     )
     stem = label.replace(" ", "_")
 
@@ -1168,7 +1290,7 @@ def render_contracts(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> No
     )
     right.download_button(
         "Download contract arrays (NPZ)",
-        data=contract_npz_bytes(geometry, mesh),
+        data=contract_npz_bytes(geometry, mesh, st.session_state.get("physics_out")),
         file_name=f"{stem}_contracts.npz",
         mime="application/octet-stream",
         width="stretch",
@@ -1208,6 +1330,7 @@ def render_mesh_views(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> N
             st.dataframe(_quality_frame(mesh), hide_index=True)
         with tabs[4]:
             render_contracts(geometry, mesh)
+        _render_flow_tabs_2d(mesh)
         return
 
     tabs = st.tabs(["Normals", "Quality", "Contracts"])
@@ -1224,12 +1347,187 @@ def render_mesh_views(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> N
         st.dataframe(_quality_frame(mesh), hide_index=True)
     with tabs[2]:
         render_contracts(geometry, mesh)
+    _render_pressure_3d(mesh)
+
+
+def _cp_figure(mesh: MeshOutput, physics: Dict[str, Any]) -> go.Figure:
+    panel = mesh["panel_2d"]
+    assert panel is not None
+    cp = np.asarray(physics["inviscid"]["cp_inviscid"], dtype=np.float64)
+    x = np.asarray(panel["x_over_c"], dtype=np.float64)
+    upper = np.asarray(panel["normal"], dtype=np.float64)[:, 1] >= 0.0
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x[upper], y=cp[upper], mode="lines", name="Upper"))
+    fig.add_trace(go.Scatter(x=x[~upper], y=cp[~upper], mode="lines", name="Lower"))
+    fig.update_layout(xaxis_title="x/c", yaxis_title="Cp", yaxis_autorange="reversed", height=PLOT_HEIGHT_2D)
+    return fig
+
+
+def _boundary_layer_figure(mesh: MeshOutput, physics: Dict[str, Any]) -> Optional[go.Figure]:
+    ibl = physics.get("ibl")
+    stations = mesh["ibl_1d"]
+    if ibl is None or stations is None:
+        return None
+    fig = go.Figure()
+    for side in ("upper", "lower"):
+        s = np.asarray(stations[f"s_{side}"], dtype=np.float64)
+        for name, key in (("Cf", "cf"), ("δ*", "delta_star"), ("θ", "theta"), ("δ", "delta")):
+            values = np.asarray(ibl[f"{key}_{side}"], dtype=np.float64)
+            if values.shape != s.shape:
+                continue
+            fig.add_trace(go.Scatter(x=s, y=values, mode="lines", name=f"{name} {side}"))
+    fig.update_layout(xaxis_title="s", yaxis_title="profile", height=PLOT_HEIGHT_2D)
+    return fig
+
+
+def _farfield_quiver(mesh: MeshOutput, physics: Dict[str, Any]) -> Optional[go.Figure]:
+    field = physics.get("field_2d")
+    grid = mesh["cartesian_2d"]
+    if field is None or grid is None:
+        return None
+    x_nodes = np.asarray(grid["x_nodes"], dtype=np.float64)
+    y_nodes = np.asarray(grid["y_nodes"], dtype=np.float64)
+    u = np.asarray(field["u"], dtype=np.float64)
+    v = np.asarray(field["v"], dtype=np.float64)
+    step = max(1, int(max(u.shape) / 18))
+    xs, ys = np.meshgrid(x_nodes, y_nodes)
+    xs = xs[::step, ::step]
+    ys = ys[::step, ::step]
+    us = u[::step, ::step]
+    vs = v[::step, ::step]
+    live = np.isfinite(us) & np.isfinite(vs)
+    origin = np.column_stack((xs[live], ys[live]))
+    direction = np.column_stack((us[live], vs[live]))
+    speed = np.linalg.norm(direction, axis=1)
+    direction = direction / np.maximum(speed[:, None], 1e-8)
+    span = float(max(np.ptp(x_nodes), np.ptp(y_nodes), 1e-6))
+    qx, qy = _quiver(origin, direction, 0.04 * span)
+    fig = go.Figure(go.Scatter(x=qx, y=qy, mode="lines", name="Velocity", line={"width": 1.5}))
+    apply_2d_plot_layout(
+        fig,
+        x_range=[float(x_nodes[0]), float(x_nodes[-1])],
+        y_range=[float(y_nodes[0]), float(y_nodes[-1])],
+        view_id="physics-farfield",
+    )
+    return fig
+
+
+def _render_flow_tabs_2d(mesh: MeshOutput) -> None:
+    physics = st.session_state.get("physics_out")
+    physics_error = st.session_state.get("physics_error")
+    if physics_error:
+        st.error(physics_error)
+    if physics is None:
+        return
+    loads = physics["loads"]
+    st.caption(
+        f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f} · "
+        f"iterations={physics['vic_iterations']} · residual={physics['residual']:.3e}"
+    )
+    for note in physics["warnings"]:
+        if "separated" in note.lower() or physics["converged"] is False:
+            st.warning(note)
+        elif "skipped" in note.lower():
+            st.info(note)
+        else:
+            st.warning(note)
+    if physics["converged"] is False and not any("residual" in note for note in physics["warnings"]):
+        st.warning(
+            f"Viscous-inviscid iteration did not converge "
+            f"(vic_iterations={physics['vic_iterations']}, residual={physics['residual']:.3e})."
+        )
+    tabs = st.tabs(["Cp", "Boundary layer", "Farfield vectors"])
+    with tabs[0]:
+        _show_2d_chart(_cp_figure(mesh, physics), "physics-cp-2d")
+    with tabs[1]:
+        figure = _boundary_layer_figure(mesh, physics)
+        if figure is None:
+            st.info("This solve has no boundary-layer stations.")
+        else:
+            _show_2d_chart(figure, "physics-bl-2d")
+            ibl = physics["ibl"]
+            if ibl is not None:
+                st.caption(
+                    f"transition upper s={ibl['transition_s_upper']:.4g} · "
+                    f"lower s={ibl['transition_s_lower']:.4g} · "
+                    f"separation upper s={ibl['separation_s_upper']:.4g} · "
+                    f"lower s={ibl['separation_s_lower']:.4g}"
+                )
+    with tabs[2]:
+        quiver = _farfield_quiver(mesh, physics)
+        if quiver is None:
+            st.info("No farfield was reconstructed.")
+        else:
+            _show_2d_chart(quiver, "physics-quiver-2d")
+
+
+def _render_pressure_3d(mesh: MeshOutput) -> None:
+    physics = st.session_state.get("physics_out")
+    physics_error = st.session_state.get("physics_error")
+    if physics_error:
+        st.error(physics_error)
+        return
+    if physics is None:
+        return
+    for note in physics["warnings"]:
+        if "skipped" in note.lower():
+            st.info(note)
+        else:
+            st.warning(note)
+    panel = mesh["panel_3d"]
+    if panel is None:
+        return
+    loads = physics["loads"]
+    st.caption(f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f}")
+    facets = panel["facets"]
+    shown = facets if facets.shape[0] <= 25_000 else facets[:25_000]
+    cp = np.asarray(physics["inviscid"]["cp_inviscid"], dtype=np.float64)
+    if cp.shape[0] != facets.shape[0]:
+        return
+    cp = cp[: shown.shape[0]]
+    vertices = shown.reshape(-1, 3)
+    intensity = np.repeat(cp, 3)
+    index = np.arange(0, shown.shape[0] * 3, 3)
+    fig = go.Figure(
+        data=[
+            go.Mesh3d(
+                x=vertices[:, 0],
+                y=vertices[:, 1],
+                z=vertices[:, 2],
+                i=index,
+                j=index + 1,
+                k=index + 2,
+                intensity=intensity,
+                colorscale="RdBu_r",
+                colorbar={"title": "Cp"},
+                name="Cp",
+            )
+        ]
+    )
+    step = max(1, int(panel["areas"].shape[0]) // 500)
+    scale = 0.08 * float(
+        np.linalg.norm(
+            np.array([np.ptp(facets[:, :, 0]), np.ptp(facets[:, :, 1]), np.ptp(facets[:, :, 2])])
+        )
+    )
+    qx, qy, qz = _quiver(panel["centroids"][::step], panel["normals"][::step], max(scale, 1e-6))
+    fig.add_trace(
+        go.Scatter3d(
+            x=qx,
+            y=qy,
+            z=qz,
+            mode="lines",
+            name="Unit normals",
+            line={"width": 3, "color": "#c0392b"},
+        )
+    )
+    st.plotly_chart(fig, width="stretch")
 
 
 def render_mesh_workbench() -> None:
-    st.title("Modules 1–2 — Geometry and Mesh")
+    st.title("Modules 1–3 — Geometry, Mesh, and Physics")
     st.write(
-        "Geometry feeds Module 2 directly. Pick a source in the sidebar: "
+        "Geometry feeds Module 2, and the mesh feeds the panel solver. Pick a source in the sidebar: "
         "**Upload my geometry file** (SVG/DXF section or STL/OBJ body), "
         "**Build a shape** from parameters, **Pipeline case** for a stored "
         "end-to-end journey, or **Math module sample** for a mesh fixture "
@@ -1247,7 +1545,11 @@ def render_mesh_workbench() -> None:
         notes = meta.get("notes") or {}
         seconds = notes.get("math_seconds")
         timing = f" · mesh {seconds * 1000:.1f} ms" if isinstance(seconds, float) else ""
-        tuned = notes.get("math_overrides")
+        physics_seconds = notes.get("physics_seconds")
+        if isinstance(physics_seconds, float):
+            timing += f" · physics {physics_seconds * 1000:.1f} ms"
+        tuned = list(notes.get("math_overrides") or [])
+        tuned.extend(notes.get("physics_overrides") or [])
         if tuned:
             timing += " · tuned: " + ", ".join(tuned)
         st.success(

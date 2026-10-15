@@ -1,0 +1,42 @@
+{
+  "module": "physics",
+  "kind": "module_samples",
+  "samples": [
+    {
+      "id": "bad_te_index",
+      "title": "Trailing-edge index misses both panels",
+      "description": "A closed section whose te_index does not touch two panels must raise InvalidFlowConditionError before a Kutta row is built.",
+      "spec": {
+        "kind": "bad_te_index",
+        "expect_error": "InvalidFlowConditionError"
+      }
+    },
+    {
+      "id": "singular_collocation",
+      "title": "Coincident panel collocation",
+      "description": "Every collocation point stacked on one location makes the Dirichlet matrix singular.",
+      "spec": {
+        "kind": "singular_collocation",
+        "expect_error": "SingularInfluenceMatrixError"
+      }
+    },
+    {
+      "id": "thwaites_blasius",
+      "title": "Thwaites march at constant edge speed",
+      "description": "Zero pressure gradient. Momentum thickness follows the Blasius growth from the Thwaites integral.",
+      "spec": {
+        "kind": "thwaites_blasius",
+        "expect_error": null
+      }
+    },
+    {
+      "id": "naca0012_alpha0",
+      "title": "Attached NACA 0012 at zero incidence",
+      "description": "Symmetric inviscid check. Net lift stays under 0.02 and the pressure is symmetric.",
+      "spec": {
+        "kind": "naca_alpha0",
+        "expect_error": null
+      }
+    }
+  ]
+}

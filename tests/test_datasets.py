@@ -77,9 +77,10 @@ def test_pipeline_case_runs_geo_then_math() -> None:
     result = run_pipeline_case("airfoil_naca_0012_cruise")
     _assert(result["geo"] is not None, "pipeline geo stage missing")
     _assert(result["math"] is not None, "pipeline math stage missing")
-    _assert(result["active_stages"] == ["geo", "math"], "geo and math are the live stages")
-    _assert(result["pending_stages"][0] == "physics", "next pending stage should be physics")
-    _assert(result["notes"]["executed"] == ["geo", "math"], "runner must record both stages")
+    _assert(result["active_stages"] == ["geo", "math", "physics"], "geo, math, and physics are the live stages")
+    _assert(result["pending_stages"][0] == "aero", "next pending stage should be aero")
+    _assert(result["notes"]["executed"] == ["geo", "math", "physics"], "runner must record all three stages")
+    _assert(result["physics"] is not None, "pipeline physics stage missing")
     mesh = result["math"]
     assert mesh is not None
     _assert(mesh["panel_2d"] is not None, "2D cruise case must emit vortex panels")
@@ -100,6 +101,8 @@ def test_all_pipeline_cases_produce_geo_and_math() -> None:
         mesh = result["math"]
         assert mesh is not None and result["geo"] is not None
         _assert(mesh["mode"] == result["geo"]["mode"], f"{case.id} mode changed between stages")
+        _assert(result["physics"] is not None, f"{case.id} produced no physics")
+        _assert(np.isfinite(result["physics"]["loads"]["cl"]), f"{case.id} lift is not finite")
 
 
 def test_pipeline_covers_every_geometry_source() -> None:

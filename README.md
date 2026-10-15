@@ -10,7 +10,7 @@ Python pipeline for fast 2D airfoil and 3D wing/body aerodynamic analysis, built
 |---|---|---|---|
 | 1. Geometry (`geo_module`) | Integrated & visually validated | `src/geo_module/geo_skeleton.py` | `src/streamlit_ui/app_geo.py` |
 | 2. Mesh (`math_module`) | Integrated with geometry (panels, farfield, IBL stations, 3D metrics) | `src/math_module/math_skeleton.py` | `src/streamlit_ui/app_mesh.py` |
-| 3. Physics (`physics_module`) | Draft contract (VIC panel + IBL) | `src/physics_module/physics_skeleton.py` | — |
+| 3. Physics (`physics_module`) | Live (VIC panel + IBL) | `src/physics_module/`, [spec](PHYSICS_MODULE_SPEC.md) | `streamlit run src/streamlit_ui/app.py` |
 | 4. Aero (`aero_module`) | Draft contract (\(C_L, C_{D,p}, C_{D,f}, C_M\)) | `src/aero_module/aero_skeleton.py` | — |
 | 5. AI (`ai_module`) | Not started | `AIOutput` | — |
 | 6. UI | Geometry + mesh workbench | — | `app.py` = latest stage |
@@ -50,7 +50,7 @@ The combined workbench runs a pipeline case, a math fixture, or a live shape (NA
 
 Two tracks (see [datasets/README.md](datasets/README.md)):
 
-1. **Module samples** — `datasets/modules/geo/` and `datasets/modules/math/` (placeholders remain for physics/aero/ai).
+1. **Module samples** — `datasets/modules/geo/`, `datasets/modules/math/`, and `datasets/modules/physics/` (placeholders remain for aero/ai).
 2. **Pipeline cases** — `datasets/pipeline/` (same case ids; live stages are geo and math). Seven cases cover every geometry source: NACA 0012 and 4412 sections, a thin flat plate, an imported SVG section, a rectangular wing, a swept drone wing, and a closed cylinder.
 
 Workbench sidebar **Source**: **Upload my geometry file**, **Build a shape**, **Pipeline case**, or **Math module sample**. The page opens on the NACA 0012 cruise case. Mesh sliders rebuild on every change for all four sources. 2D controls are panel count, LE/TE clustering, farfield `n_x`/`n_y`, and the chord-relative box. 3D controls are spanwise sections and points per section (wings), circumferential segments and axial rings (cylinders), plus surface panel density on every body, including uploads and stored cases. Guard math fixtures stay locked to their stored parameters.
@@ -71,7 +71,7 @@ print(contract_summary_json(result["geo"], result["math"], label=result["case_id
 datasets/                # Module fixtures + end-to-end pipeline cases
 src/geo_module/          # Module 1 (live)
 src/math_module/         # Module 2 mesh engine (live)
-src/physics_module/      # Module 3 draft skeleton
+src/physics_module/      # Module 3 viscous-inviscid panel solver
 src/aero_module/         # Module 4 draft skeleton
 src/shared/              # Catalog loader, pipeline runner, contract export
 src/streamlit_ui/        # Incremental visual test benches
@@ -82,6 +82,6 @@ tests/                   # Smoke tests
 
 - [Geometry Engine README](src/geo_module/README.md)
 - [Mathematics & Mesh spec](src/math_module/README.md)
-- [Physics draft](src/physics_module/README.md)
+- [Physics specification](PHYSICS_MODULE_SPEC.md) (implemented; [module note](src/physics_module/README.md))
 - [Aero draft](src/aero_module/README.md)
 - [Datasets README](datasets/README.md)

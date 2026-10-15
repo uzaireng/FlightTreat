@@ -1,4 +1,4 @@
-"""Latest pipeline workbench (Modules 1–2: Geometry → Mesh)."""
+"""Latest pipeline workbench (Modules 1–3: Geometry → Mesh → Physics)."""
 
 from __future__ import annotations
 

@@ -1,5 +1,6 @@
-"""Physics solver (Module 3) — draft contract only."""
+"""Physics solver (Module 3) — viscous-inviscid panel method."""
 
+from .physics_engine import PhysicsEngine
 from .physics_skeleton import (
     BoundaryLayerSeparationError,
     FreestreamConditions,
@@ -15,6 +16,7 @@ from .physics_skeleton import (
 )
 
 __all__ = [
+    "PhysicsEngine",
     "BoundaryLayerSeparationError",
     "FreestreamConditions",
     "InvalidFlowConditionError",

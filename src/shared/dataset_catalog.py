@@ -307,3 +307,55 @@ def get_math_module_sample(name_or_id: str) -> MathModuleSample:
             return sample
 
     raise DatasetCatalogError(f"Unknown math module sample '{key}'.")
+
+
+class PhysicsSampleSpec(BaseModel):
+    """Solver-only fixture. It does not repeat a pipeline journey."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["bad_te_index", "singular_collocation", "thwaites_blasius", "naca_alpha0"]
+    expect_error: Optional[str] = None
+
+
+class PhysicsModuleSample(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    spec: PhysicsSampleSpec
+
+
+class PhysicsModuleCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    module: Literal["physics"]
+    kind: Literal["module_samples"]
+    samples: List[PhysicsModuleSample]
+
+
+@lru_cache(maxsize=8)
+def load_physics_module_catalog() -> PhysicsModuleCatalog:
+    payload = _read_json(datasets_root() / "modules" / "physics" / "catalog.json")
+    catalog = PhysicsModuleCatalog.model_validate(payload)
+    ids = [sample.id for sample in catalog.samples]
+    if len(ids) != len(set(ids)):
+        raise DatasetCatalogError("physics module sample ids must be unique.")
+    return catalog
+
+
+def list_physics_module_samples() -> tuple[PhysicsModuleSample, ...]:
+    return tuple(load_physics_module_catalog().samples)
+
+
+def get_physics_module_sample(name_or_id: str) -> PhysicsModuleSample:
+    if not isinstance(name_or_id, str) or not name_or_id.strip():
+        raise DatasetCatalogError("Sample name must be a non-empty string.")
+
+    key = name_or_id.strip()
+    for sample in list_physics_module_samples():
+        if sample.id == key or sample.title == key:
+            return sample
+
+    raise DatasetCatalogError(f"Unknown physics module sample '{key}'.")

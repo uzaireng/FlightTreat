@@ -1,3 +1,12 @@
 # physics_module samples
 
-Placeholder. Add solver-only unit fixtures here (singular influence matrices, Kutta edge cases). Pipeline cases stay in `datasets/pipeline/`.
+Solver-only fixtures in `catalog.json`. They are not extra user journeys. The seven pipeline cases stay in `datasets/pipeline/` and now include `stages.physics`.
+
+| Sample | Expectation |
+|---|---|
+| `bad_te_index` | `InvalidFlowConditionError` |
+| `singular_collocation` | `SingularInfluenceMatrixError` |
+| `thwaites_blasius` | Momentum thickness within 2% of `sqrt(0.45 ν s / U)` |
+| `naca0012_alpha0` | Inviscid `|Cl| < 0.02` |
+
+Run them with `run_physics_module_sample` from `src/shared/pipeline_runner.py`.
