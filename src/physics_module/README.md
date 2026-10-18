@@ -44,4 +44,5 @@ Pipeline cases call the same engine through `run_pipeline_case`. `physics_overri
 - Condition above `1e12`, or a GMRES failure, raises `SingularInfluenceMatrixError`.
 - Separation with `fail_on_separation=False` (the default) returns the payload, sets `separated`, and appends a warning.
 - Panel counts above `dense_panel_limit` (default 2000) use GMRES on the already-built influence matrix.
+- Open lofted wings take `s_ref` from each spanwise station's own chord integrated along y. Sweep does not change that area. Closed bodies keep the product of the two largest centroid extents. An open surface that is not a loft keeps the centroid x-extent times y-extent.
 - 2D Prandtl–Glauert stretches the chord, solves, then divides `Cp` by `β`. 3D applies the same `Cp` correction and does not stretch the surface mesh.

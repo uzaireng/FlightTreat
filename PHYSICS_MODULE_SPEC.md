@@ -404,7 +404,7 @@ Cl from the pressure (and friction) resultant, not from a second formula
 
 A check, not a second definition: for attached inviscid flow, `Cl` and `2 Γ / chord` agree within `5e-2` on the NACA 0012 and flat-plate cases. A larger gap fails the unit test. The reported `cl` is always the integrated resultant.
 
-**3D.** Same pressure integral with `areas` and `normals`. Reference area `s_ref` is the projected planform: sum of `|n · e_z| * area` is not the planform. Use the bounding-box product of chord-wise and span-wise extents of the centroids for wings, and the wetted-area convention is forbidden for coefficients. For the closed cylinder, `s_ref` is the maximum projected cross-section `diameter * length`, because there is no planform. Document the chosen `s_ref` on `loads`.
+**3D.** Same pressure integral with `areas` and `normals`. Reference area `s_ref` is the projected planform: sum of `|n · e_z| * area` is not the planform, and the wetted-area convention is forbidden for coefficients. An open wing lofted in spanwise stations uses the trapezoidal integral of each station's own x-extent along y. Sweep shifts a whole station together, so it does not enter that integral. A closed body keeps the product of its two largest centroid extents (for the cylinder, the projected cross-section `diameter * length`). An open surface that is not a loft keeps the product of the centroid x-extent and y-extent, which still includes sweep and tip inset; that fallback is not a wing planform. Document the chosen `s_ref` on `loads`.
 
 Friction is included only when an `IBLSolution` exists. Otherwise `cd_friction` is `nan` and `warnings` contains `"3D boundary layer skipped: mesh has no ibl_1d stations"`.
 

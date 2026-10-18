@@ -90,11 +90,68 @@ def _loads_2d(
     )
 
 
+def _lofted_planform_area(facets: np.ndarray) -> Optional[float]:
+    """Projected planform of a spanwise loft, or ``None`` when it is not one.
+
+    Wing sections from the geometry generator share a y coordinate. Sweep
+    adds the same ``|y| tan Λ`` to every point on a section, so the
+    section's own x-extent is the local chord and does not grow with
+    sweep. The planform is the trapezoidal integral of that chord along y.
+
+    A station needs at least four vertices and a positive x-extent. An
+    open surface that is not a loft (a patch, a cap, an unstructured
+    cloud) returns ``None``. The caller then keeps the centroid-box area
+    and does not invent a wing chord.
+    """
+
+    verts = np.asarray(facets, dtype=np.float64).reshape(-1, 3)
+    if verts.shape[0] < 8:
+        return None
+    y = verts[:, 1]
+    span = float(np.ptp(y))
+    if not np.isfinite(span) or span <= 1e-12:
+        return None
+    tol = max(span * 1e-8, 1e-12)
+    order = np.argsort(y, kind="mergesort")
+    y_sorted = y[order]
+    x_sorted = np.asarray(verts[order, 0], dtype=np.float64)
+    jumps = np.diff(y_sorted) > tol
+    station = np.cumsum(np.concatenate((np.zeros(1, dtype=np.int64), jumps.astype(np.int64))))
+    n_stations = int(station[-1]) + 1
+    if n_stations < 2:
+        return None
+    counts = np.bincount(station)
+    if counts.shape[0] != n_stations or np.any(counts < 4):
+        return None
+    x_min = np.full(n_stations, np.inf, dtype=np.float64)
+    x_max = np.full(n_stations, -np.inf, dtype=np.float64)
+    np.minimum.at(x_min, station, x_sorted)
+    np.maximum.at(x_max, station, x_sorted)
+    chord = x_max - x_min
+    if not np.all(np.isfinite(chord)) or np.any(chord <= span * 1e-6):
+        return None
+    y_station = np.bincount(station, weights=y_sorted) / counts
+    dy = np.diff(y_station)
+    if np.any(dy <= 0.0):
+        return None
+    area = float(np.sum(0.5 * (chord[:-1] + chord[1:]) * dy))
+    if not np.isfinite(area) or area <= 0.0:
+        return None
+    return area
+
+
 def _reference_area_3d(mesh: MeshOutput) -> tuple[float, float, np.ndarray, np.ndarray]:
-    """Planform (open wing) or projected cross-section (closed body).
+    """Planform (open lofted wing) or projected cross-section (closed body).
 
     Returns ``s_ref``, reference length, quarter-chord origin, and the
     area-weighted centroid.
+
+    Closed bodies keep the product of the two largest centroid extents
+    (projected cross-section). Open lofted wings use
+    ``_lofted_planform_area``. Any other open surface keeps the product of
+    the centroid x-extent and y-extent. That fallback still includes a
+    sweep offset and stops short of the tips; it is used only when the
+    vertices do not form chord-bearing stations.
     """
 
     panel = mesh["panel_3d"]
@@ -121,8 +178,10 @@ def _reference_area_3d(mesh: MeshOutput) -> tuple[float, float, np.ndarray, np.n
     if root_chord <= 0.0:
         root_chord = float(np.ptp(centroids[:, 0]))
     origin = np.array([x_le + 0.25 * root_chord, y_root, z_le], dtype=np.float64)
-    s_ref = float(np.ptp(centroids[:, 0]) * max(span, 1e-12))
-    return s_ref, root_chord, origin, centroid
+    planform = _lofted_planform_area(panel["facets"])
+    if planform is None:
+        planform = float(np.ptp(centroids[:, 0]) * max(span, 1e-12))
+    return planform, root_chord, origin, centroid
 
 
 def _loads_3d(
