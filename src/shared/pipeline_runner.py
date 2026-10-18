@@ -1,10 +1,9 @@
 """
 End-to-end pipeline sample runner.
 
-Live stages: geo → math → physics. Aero and AI contracts exist
-(`aero_skeleton`). When those implementations land, extend
-`run_pipeline_case` so the same case ids keep flowing
-GeometryOutput → MeshOutput → PhysicsOutput → AeroOutput → AIOutput.
+Live stages: geo → math → physics → aero. AI stays pending.
+`run_pipeline_case` flows
+GeometryOutput → MeshOutput → PhysicsOutput → AeroOutput.
 """
 
 from __future__ import annotations
@@ -14,7 +13,8 @@ from typing import Any, Dict, Optional, TypedDict
 
 import numpy as np
 
-from aero_module.aero_skeleton import AeroOutput
+from aero_module.aero_engine import AeroEngine
+from aero_module.aero_skeleton import AeroEngineError, AeroOutput
 from geo_module.geo_skeleton import GeometryOutput, validate_geometry_output
 from geo_module.geometry_module import GeometryEngine, GeometryEngineError
 from math_module.math_skeleton import InvalidMeshConfigError, MeshEngineError, MeshOutput
@@ -123,8 +123,10 @@ def run_pipeline_case(
     engine: Optional[GeometryEngine] = None,
     mesh_engine: Optional[MeshEngine] = None,
     physics_engine: Optional[PhysicsEngine] = None,
+    aero_engine: Optional[AeroEngine] = None,
     math_overrides: Optional[Dict[str, Any]] = None,
     physics_overrides: Optional[Dict[str, Any]] = None,
+    aero_overrides: Optional[Dict[str, Any]] = None,
 ) -> PipelineRunResult:
     """
     Execute every *currently implemented* stage of a pipeline case.
@@ -135,7 +137,8 @@ def run_pipeline_case(
 
     ``math_overrides`` layers user-tuned meshing parameters on top of the
     stored ``stages.math`` payload. ``physics_overrides`` does the same for
-    ``stages.physics``. The catalog file is never mutated.
+    ``stages.physics``, and ``aero_overrides`` for ``stages.aero``.
+    The catalog file is never mutated.
     """
 
     try:
@@ -193,6 +196,26 @@ def run_pipeline_case(
         physics_seconds = time.perf_counter() - started
         executed.append("physics")
 
+    aero_output: Optional[AeroOutput] = None
+    aero_seconds: Optional[float] = None
+    if "aero" in case.active_stages:
+        if physics_output is None or math_output is None:
+            raise GeometryEngineError(
+                f"Pipeline case '{case.id}' activates aero without a solved flow."
+            )
+        payload = dict(case.stages.aero or {})
+        if aero_overrides:
+            payload.update(aero_overrides)
+        started = time.perf_counter()
+        try:
+            aero_output = (
+                aero_engine if aero_engine is not None else AeroEngine()
+            ).analyze_from_solution(math_output, physics_output, payload)
+        except AeroEngineError as exc:
+            raise GeometryEngineError(str(exc)) from exc
+        aero_seconds = time.perf_counter() - started
+        executed.append("aero")
+
     pending = list(pending_pipeline_stages(case))
     notes: Dict[str, Any] = {
         "executed": executed,
@@ -206,6 +229,10 @@ def run_pipeline_case(
         notes["math_overrides"] = sorted(math_overrides)
     if physics_overrides:
         notes["physics_overrides"] = sorted(physics_overrides)
+    if aero_seconds is not None:
+        notes["aero_seconds"] = aero_seconds
+    if aero_overrides:
+        notes["aero_overrides"] = sorted(str(key) for key in aero_overrides)
     if case.stages.math is not None and "math" not in executed:
         notes["math_spec_present"] = True
     if pending:
@@ -220,7 +247,7 @@ def run_pipeline_case(
         geo=geo_output,
         math=math_output,
         physics=physics_output,
-        aero=None,
+        aero=aero_output,
         ai=None,
         notes=notes,
     )

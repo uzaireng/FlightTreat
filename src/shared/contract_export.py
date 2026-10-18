@@ -170,6 +170,25 @@ def _physics_section(physics: PhysicsOutput) -> Dict[str, Any]:
     }
 
 
+def _aero_section(aero: AeroOutput) -> Dict[str, Any]:
+    coefficients = aero["coefficients"]
+    return {
+        "mode": aero["mode"],
+        "alpha_deg": aero["alpha_deg"],
+        "cl": coefficients["cl"],
+        "cd": coefficients["cd"],
+        "cd_pressure": coefficients["cd_pressure"],
+        "cd_friction": coefficients["cd_friction"],
+        "cd_induced": coefficients["cd_induced"],
+        "cm": coefficients["cm"],
+        "l_over_d": aero["l_over_d"],
+        "center_of_pressure_x": coefficients["center_of_pressure_x"],
+        "lift": aero["dimensional"]["lift"],
+        "drag": aero["dimensional"]["drag"],
+        "warnings": list(aero["warnings"]),
+    }
+
+
 def contract_summary(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
@@ -177,12 +196,15 @@ def contract_summary(
     label: str = "run",
     notes: Optional[Dict[str, Any]] = None,
     physics: Optional[PhysicsOutput] = None,
+    aero: Optional[AeroOutput] = None,
 ) -> Dict[str, Any]:
     """JSON-safe description of every live stage contract in one run."""
 
     pending = ["physics", "aero", "ai"]
     if physics is not None:
         pending = ["aero", "ai"]
+    if aero is not None:
+        pending = ["ai"]
     summary: Dict[str, Any] = {
         "label": label,
         "live_stages": [
@@ -191,6 +213,7 @@ def contract_summary(
                 ("geo", geometry is not None),
                 ("math", mesh is not None),
                 ("physics", physics is not None),
+                ("aero", aero is not None),
             )
             if present
         ],
@@ -204,6 +227,8 @@ def contract_summary(
         summary["math"] = _mesh_section(mesh)
     if physics is not None:
         summary["physics"] = _physics_section(physics)
+    if aero is not None:
+        summary["aero"] = _aero_section(aero)
     return summary
 
 
@@ -214,9 +239,17 @@ def contract_summary_json(
     label: str = "run",
     notes: Optional[Dict[str, Any]] = None,
     physics: Optional[PhysicsOutput] = None,
+    aero: Optional[AeroOutput] = None,
 ) -> str:
     return json.dumps(
-        contract_summary(geometry, mesh, label=label, notes=notes, physics=physics),
+        contract_summary(
+            geometry,
+            mesh,
+            label=label,
+            notes=notes,
+            physics=physics,
+            aero=aero,
+        ),
         indent=2,
         sort_keys=False,
     )
@@ -226,6 +259,7 @@ def contract_arrays(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
     physics: Optional[PhysicsOutput] = None,
+    aero: Optional[AeroOutput] = None,
 ) -> Dict[str, np.ndarray]:
     """Every raw contract array, namespaced ``<stage>_<block>_<field>``."""
 
@@ -259,6 +293,15 @@ def contract_arrays(
             for name in ("u", "v", "w", "speed", "cp", "phi", "psi"):
                 arrays[f"physics_field_{name}"] = np.asarray(field_2d[name])  # type: ignore[literal-required]
 
+    if aero is not None:
+        arrays["aero_cp_surface"] = np.asarray(aero["cp_surface"], dtype=np.float64)
+        if aero["x_over_c"] is not None:
+            arrays["aero_x_over_c"] = np.asarray(aero["x_over_c"], dtype=np.float64)
+        spanwise = aero["spanwise"]
+        if spanwise is not None:
+            arrays["aero_spanwise_y"] = np.asarray(spanwise["y"], dtype=np.float64)
+            arrays["aero_spanwise_cl"] = np.asarray(spanwise["cl"], dtype=np.float64)
+
     return arrays
 
 
@@ -266,9 +309,10 @@ def contract_npz_bytes(
     geometry: Optional[GeometryOutput],
     mesh: Optional[MeshOutput],
     physics: Optional[PhysicsOutput] = None,
+    aero: Optional[AeroOutput] = None,
 ) -> bytes:
     """Compressed ``.npz`` of every contract array, ready for download."""
 
     buffer = io.BytesIO()
-    np.savez_compressed(buffer, **contract_arrays(geometry, mesh, physics))
+    np.savez_compressed(buffer, **contract_arrays(geometry, mesh, physics, aero))
     return buffer.getvalue()

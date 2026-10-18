@@ -8,7 +8,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -33,6 +34,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "viscous_inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "none"
         }
       }
     },
@@ -43,7 +47,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -68,6 +73,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "viscous_inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "none"
         }
       }
     },
@@ -78,7 +86,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -103,6 +112,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "none"
         }
       }
     },
@@ -113,7 +125,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -138,6 +151,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "viscous_inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "none"
         }
       }
     },
@@ -148,7 +164,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -173,6 +190,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "lifting_line"
         }
       }
     },
@@ -183,7 +203,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -208,6 +229,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "lifting_line"
         }
       }
     },
@@ -218,7 +242,8 @@
       "active_stages": [
         "geo",
         "math",
-        "physics"
+        "physics",
+        "aero"
       ],
       "stages": {
         "geo": {
@@ -240,6 +265,9 @@
           "v_inf": 1.0,
           "rho": 1.225,
           "regime": "inviscid"
+        },
+        "aero": {
+          "induced_drag_model": "none"
         }
       }
     }

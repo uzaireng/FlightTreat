@@ -18,7 +18,7 @@ Isolated fixtures for one engine (unit tests + single-module workbench).
 
 Real-user journeys. The **same case id** is reused as each downstream module is integrated (`geo` → `math` → `physics` → `aero` → `ai`).
 
-Current live stages: **geo → math → physics**. `active_stages` will grow when aero and AI land; do not create a second set of user-journey names per module.
+Current live stages: **geo → math → physics → aero**. `active_stages` will grow when AI lands; do not create a second set of user-journey names per module.
 
 Each pipeline case carries `stages.physics` (`alpha_deg`, `reynolds`, `mach`, `v_inf`, `rho`, `regime`). `run_pipeline_case` solves that payload. `physics_overrides` merges on top and does not rewrite the catalog.
 

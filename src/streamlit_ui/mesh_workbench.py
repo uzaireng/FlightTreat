@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from geo_module import GeometryEngine, GeometryEngineError, GeometryOutput
 from math_module import BoundaryRegion, MeshEngine, MeshEngineError, MeshOutput
+from aero_module import AeroEngine, AeroEngineError
 from physics_module import PhysicsEngine, PhysicsEngineError
 from physics_module.physics_engine import split_flow_payload
 from shared.contract_export import contract_npz_bytes, contract_summary_json
@@ -884,6 +885,8 @@ def _store_run(
     expect_error: Optional[str],
     physics: Any = None,
     physics_error: Optional[str] = None,
+    aero: Any = None,
+    aero_error: Optional[str] = None,
 ) -> None:
     st.session_state["mesh_geo"] = geo
     st.session_state["mesh_out"] = mesh
@@ -892,6 +895,8 @@ def _store_run(
     st.session_state["mesh_expect"] = expect_error
     st.session_state["physics_out"] = physics
     st.session_state["physics_error"] = physics_error
+    st.session_state["aero_out"] = aero
+    st.session_state["aero_error"] = aero_error
 
 
 def _geo_deltas(
@@ -1025,6 +1030,17 @@ def _solve_flow(mesh: MeshOutput, flow: Dict[str, Any]) -> tuple[Any, Optional[s
     return solved, None, time.perf_counter() - started
 
 
+def _reduce_aero(mesh: MeshOutput, physics: Any) -> tuple[Any, Optional[str], float]:
+    """Module 4 reads the solved flow. A reduction error keeps the physics plot."""
+
+    started = time.perf_counter()
+    try:
+        reduced = AeroEngine().analyze_from_solution(mesh, physics, {})
+    except (AeroEngineError, ValueError) as exc:
+        return None, str(exc), time.perf_counter() - started
+    return reduced, None, time.perf_counter() - started
+
+
 def _publish_mesh(
     mesh_engine: MeshEngine,
     active: _ActiveGeometry,
@@ -1052,6 +1068,8 @@ def _publish_mesh(
         notes.pop("math_overrides", None)
     physics = None
     physics_error = None
+    aero = None
+    aero_error = None
     if flow is not None:
         physics, physics_error, physics_seconds = _solve_flow(mesh, flow)
         notes["physics_seconds"] = physics_seconds
@@ -1069,6 +1087,9 @@ def _publish_mesh(
             notes["physics_overrides"] = tuned_flow
         else:
             notes.pop("physics_overrides", None)
+        if physics is not None:
+            aero, aero_error, aero_seconds = _reduce_aero(mesh, physics)
+            notes["aero_seconds"] = aero_seconds
     meta = dict(active.meta)
     meta["notes"] = notes
     if meta.get("kind") == "math_sample":
@@ -1081,6 +1102,8 @@ def _publish_mesh(
         expect_error=None,
         physics=physics,
         physics_error=physics_error,
+        aero=aero,
+        aero_error=aero_error,
     )
 
 
@@ -1273,6 +1296,7 @@ def render_contracts(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> No
         label=label,
         notes=meta.get("notes"),
         physics=st.session_state.get("physics_out"),
+        aero=st.session_state.get("aero_out"),
     )
     stem = label.replace(" ", "_")
 
@@ -1290,7 +1314,12 @@ def render_contracts(geometry: Optional[GeometryOutput], mesh: MeshOutput) -> No
     )
     right.download_button(
         "Download contract arrays (NPZ)",
-        data=contract_npz_bytes(geometry, mesh, st.session_state.get("physics_out")),
+        data=contract_npz_bytes(
+            geometry,
+            mesh,
+            st.session_state.get("physics_out"),
+            st.session_state.get("aero_out"),
+        ),
         file_name=f"{stem}_contracts.npz",
         mime="application/octet-stream",
         width="stretch",
@@ -1420,10 +1449,23 @@ def _render_flow_tabs_2d(mesh: MeshOutput) -> None:
     if physics is None:
         return
     loads = physics["loads"]
+    aero = st.session_state.get("aero_out")
+    if aero is None:
+        headline = f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f}"
+    else:
+        coefficients = aero["coefficients"]
+        glide = aero["l_over_d"]
+        glide_text = "nan" if glide != glide else f"{glide:.2f}"
+        headline = (
+            f"Cl={coefficients['cl']:.4f} · Cd={coefficients['cd']:.4f} · "
+            f"L/D={glide_text} · x_cp/c={coefficients['center_of_pressure_x']:.3f}"
+        )
     st.caption(
-        f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f} · "
-        f"iterations={physics['vic_iterations']} · residual={physics['residual']:.3e}"
+        headline
+        + f" · iterations={physics['vic_iterations']} · residual={physics['residual']:.3e}"
     )
+    if st.session_state.get("aero_error"):
+        st.warning(str(st.session_state.get("aero_error")))
     for note in physics["warnings"]:
         if "separated" in note.lower() or physics["converged"] is False:
             st.warning(note)
@@ -1477,8 +1519,20 @@ def _render_pressure_3d(mesh: MeshOutput) -> None:
     panel = mesh["panel_3d"]
     if panel is None:
         return
-    loads = physics["loads"]
-    st.caption(f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f}")
+    aero = st.session_state.get("aero_out")
+    if aero is None:
+        loads = physics["loads"]
+        st.caption(f"Cl={loads['cl']:.4f} · Cd={loads['cd']:.4f}")
+    else:
+        coefficients = aero["coefficients"]
+        induced = coefficients["cd_induced"]
+        induced_text = "nan" if induced != induced else f"{induced:.4f}"
+        st.caption(
+            f"Cl={coefficients['cl']:.4f} · Cd={coefficients['cd']:.4f} · "
+            f"CDi={induced_text} · L/D={aero['l_over_d']:.2f}"
+        )
+    if st.session_state.get("aero_error"):
+        st.warning(str(st.session_state.get("aero_error")))
     facets = panel["facets"]
     shown = facets if facets.shape[0] <= 25_000 else facets[:25_000]
     cp = np.asarray(physics["inviscid"]["cp_inviscid"], dtype=np.float64)
@@ -1525,9 +1579,9 @@ def _render_pressure_3d(mesh: MeshOutput) -> None:
 
 
 def render_mesh_workbench() -> None:
-    st.title("Modules 1–3 — Geometry, Mesh, and Physics")
+    st.title("Modules 1–4 — Geometry, Mesh, Physics, and Aero")
     st.write(
-        "Geometry feeds Module 2, and the mesh feeds the panel solver. Pick a source in the sidebar: "
+        "Geometry feeds the mesh, the mesh feeds the panel solver, and the solver feeds the aerodynamic report. Pick a source in the sidebar: "
         "**Upload my geometry file** (SVG/DXF section or STL/OBJ body), "
         "**Build a shape** from parameters, **Pipeline case** for a stored "
         "end-to-end journey, or **Math module sample** for a mesh fixture "
@@ -1548,6 +1602,9 @@ def render_mesh_workbench() -> None:
         physics_seconds = notes.get("physics_seconds")
         if isinstance(physics_seconds, float):
             timing += f" · physics {physics_seconds * 1000:.1f} ms"
+        aero_seconds = notes.get("aero_seconds")
+        if isinstance(aero_seconds, float):
+            timing += f" · aero {aero_seconds * 1000:.1f} ms"
         tuned = list(notes.get("math_overrides") or [])
         tuned.extend(notes.get("physics_overrides") or [])
         if tuned:
