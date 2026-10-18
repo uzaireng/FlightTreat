@@ -19,12 +19,16 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from geo_module.geo_skeleton import GeometryOutput
-from math_module.math_skeleton import BoundaryRegion, MeshOutput
-from physics_module.physics_skeleton import PhysicsOutput
+# Names stay in annotations only. Importing the mesh package here would
+# re-enter math_skeleton while it is still loading geo and this file.
+# Type names are annotations only so this module can load while the mesh
+# package is still initializing.
 
 
-_REGION_NAME: Dict[int, str] = {int(region): region.name for region in BoundaryRegion}
+def _region_names() -> Dict[int, str]:
+    from math_module.math_skeleton import BoundaryRegion
+
+    return {int(region): region.name for region in BoundaryRegion}
 
 
 def _array_stats(array: np.ndarray) -> Dict[str, Any]:
@@ -82,13 +86,14 @@ def _panel_2d_section(panel: Dict[str, Any]) -> Dict[str, Any]:
 def _cartesian_section(grid: Dict[str, Any]) -> Dict[str, Any]:
     mask = np.asarray(grid["boundary_mask"])
     tags, counts = np.unique(mask, return_counts=True)
+    names = _region_names()
     return {
         "n_x": int(grid["n_x"]),
         "n_y": int(grid["n_y"]),
         "x_range": [float(grid["x_nodes"][0]), float(grid["x_nodes"][-1])],
         "y_range": [float(grid["y_nodes"][0]), float(grid["y_nodes"][-1])],
         "boundary_cells": {
-            _REGION_NAME.get(int(tag), str(int(tag))): int(count)
+            names.get(int(tag), str(int(tag))): int(count)
             for tag, count in zip(tags.tolist(), counts.tolist())
         },
     }

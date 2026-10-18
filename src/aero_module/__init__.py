@@ -1,21 +1,45 @@
-"""Aero analytics (Module 4) — draft contract only."""
+"""Aero analytics (Module 4) — reduction of a solved flow."""
 
+from .aero_engine import AeroEngine
 from .aero_skeleton import (
     AeroEngineError,
     AeroEngineProtocol,
     AeroInput,
     AeroOutput,
     AeroParameters,
+    AeroPolarInput,
+    AeroPolarOutput,
+    AeroParametersModel,
+    DimensionalLoads,
     ForceCoefficients,
+    InconsistentAeroInputError,
+    InvalidAeroConfigError,
     InvalidReferenceQuantityError,
+    PressureMarkers,
+    ReferenceState,
+    SpanwiseLoad,
+    ViscousSummary,
+    validate_aero_parameters,
 )
 
 __all__ = [
+    "AeroEngine",
     "AeroEngineError",
     "AeroEngineProtocol",
     "AeroInput",
     "AeroOutput",
     "AeroParameters",
+    "AeroParametersModel",
+    "AeroPolarInput",
+    "AeroPolarOutput",
+    "DimensionalLoads",
     "ForceCoefficients",
+    "InconsistentAeroInputError",
+    "InvalidAeroConfigError",
     "InvalidReferenceQuantityError",
+    "PressureMarkers",
+    "ReferenceState",
+    "SpanwiseLoad",
+    "ViscousSummary",
+    "validate_aero_parameters",
 ]
