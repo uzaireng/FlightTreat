@@ -276,6 +276,8 @@ Wake construction is the only auxiliary surface Module 3 may create. It is not w
 3. Extrude each boundary edge downstream by `wake_length_chords * root_chord` along `V∞` to form wake triangles.
 4. Kutta: wake doublet `μ_wake = μ_upper - μ_lower` on the two surface panels that share that trailing edge, which removes the wake unknown.
 
+The interior equation at each collocation point is `φ_μ + φ_σ + V∞·r = 0`, with `σ = n·V∞`. The source potential is the exact triangle integral; the self entry stays the in-plane disk value `-R/2`. Dropping `V∞·r` leaves a right-hand side that shrinks with the panel size, and the trailing-edge jump collapses under chordwise refinement. On an open wing the surface speed is `V∞` plus the chordwise derivative of `μ + V∞·r` on each spanwise strip. Closed bodies still sample the exterior perturbation just off the panel and add `V∞`.
+
 Closed bodies (`is_closed is True`, `body_cylinder_closed` and watertight uploads) use an interior Dirichlet condition at a point under each panel (or the equivalent Morino condition) so the exterior Neumann problem has a unique doublet. `kutta` is false. No wake.
 
 Influence of a unit doublet and a unit source is evaluated in the panel frame given by `transforms`, then the velocity is mapped back with `inverse_transforms`. Self-influence uses the analytic solid-angle and source jump for a constant-strength triangle.

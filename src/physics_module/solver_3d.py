@@ -40,33 +40,42 @@ def _solid_angle(targets: np.ndarray, tris: np.ndarray) -> np.ndarray:
 
 
 def _source_potential(targets: np.ndarray, tris: np.ndarray, areas: np.ndarray) -> np.ndarray:
-    """Unit-source potential ``-1/(4π) ∫ dS/r`` by a 7-point triangle rule.
+    """Unit-source potential ``-1/(4π) ∫ dS/r`` for every triangle.
 
-    The self term is the near-field limit evaluated a panel-scale distance
-    off the surface and is replaced by the caller. Shape ``(B, F)``.
+    The integral is the exact edge formula. A 7-point rule is fine far from
+    a panel and badly wrong beside a short edge, and that error is amplified
+    by the weakly constrained trailing-edge jump. ``areas`` selects the disk
+    self term applied by the caller; the in-plane self value is singular for
+    this formula at a vanishing offset. Shape ``(B, F)``.
     """
 
-    # Dunavant 7-point rule on the reference triangle, barycentric.
-    weights = np.array([0.225, 0.125939180544827, 0.125939180544827, 0.125939180544827,
-                        0.132394152788506, 0.132394152788506, 0.132394152788506], dtype=np.float64)
-    bary = np.array(
-        [
-            [1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
-            [0.059715871789770, 0.470142064105115, 0.470142064105115],
-            [0.470142064105115, 0.059715871789770, 0.470142064105115],
-            [0.470142064105115, 0.470142064105115, 0.059715871789770],
-            [0.797426985353087, 0.101286507323456, 0.101286507323456],
-            [0.101286507323456, 0.797426985353087, 0.101286507323456],
-            [0.101286507323456, 0.101286507323456, 0.797426985353087],
-        ],
-        dtype=np.float64,
-    )
-    samples = np.einsum("qk,fkj->fqj", bary, tris)
-    # (F, 7, 3), targets (B, 3)
-    delta = samples[None, :, :, :] - targets[:, None, None, :]
-    radius = np.linalg.norm(delta, axis=-1)
-    radius = np.maximum(radius, 1e-8)
-    integral = np.sum(weights[None, None, :] / radius, axis=-1) * areas[None, :]
+    del areas  # self term is replaced after this returns
+    vertex_a = tris[:, 0, :]
+    vertex_b = tris[:, 1, :]
+    vertex_c = tris[:, 2, :]
+    normal = np.cross(vertex_b - vertex_a, vertex_c - vertex_a)
+    nhat = normal / np.maximum(np.linalg.norm(normal, axis=1)[:, None], 1e-30)
+    r1 = vertex_a[None, :, :] - targets[:, None, :]
+    r2 = vertex_b[None, :, :] - targets[:, None, :]
+    r3 = vertex_c[None, :, :] - targets[:, None, :]
+    height = np.einsum("bfi,fi->bf", r1, nhat)
+    omega = _solid_angle(targets, tris)
+
+    def edge_term(start: np.ndarray, stop: np.ndarray) -> np.ndarray:
+        edge = stop - start
+        length = np.linalg.norm(edge, axis=-1)
+        direction = edge / np.maximum(length[..., None], 1e-30)
+        outward = np.cross(nhat[None, :, :], direction)
+        distance = np.einsum("bfi,bfi->bf", start, outward)
+        radius_start = np.linalg.norm(start, axis=-1)
+        radius_stop = np.linalg.norm(stop, axis=-1)
+        numer = radius_start + radius_stop + length
+        denom = np.maximum(radius_start + radius_stop - length, 1e-30)
+        return distance * np.log(numer / denom)
+
+    edges = edge_term(r1, r2) + edge_term(r2, r3) + edge_term(r3, r1)
+    # ∫ dS/r = -Σ d_i ln((R+R+L)/(R+R-L)) - h Ω.
+    integral = -edges - height * omega
     return -integral / _FOUR_PI
 
 
@@ -159,11 +168,16 @@ def _wake_triangles(
         b = centroids[ordered[1:]]
         end = a + wake_length * direction
         end_b = b + wake_length * direction
-        tri_1 = np.stack((a, b, end_b), axis=1)
-        tri_2 = np.stack((a, end_b, end), axis=1)
+        # Winding puts the sheet normal toward +z when the spanwise edge
+        # runs toward +y. The body self-term is +1/2 on the interior, so
+        # the wake must use that same side for μ_upper - μ_lower to add
+        # circulation instead of cancelling it. Triangles are stored as
+        # every strip's first triangle, then every strip's second.
+        tri_1 = np.stack((a, end_b, b), axis=1)
+        tri_2 = np.stack((a, end, end_b), axis=1)
         return np.ascontiguousarray(np.concatenate((tri_1, tri_2), axis=0), dtype=np.float64)
     end_b = b + wake_length * direction
-    tri = np.stack((a, b, end_b), axis=1)
+    tri = np.stack((a, end_b, b), axis=1)
     return np.ascontiguousarray(tri, dtype=np.float64)
 
 
@@ -196,13 +210,13 @@ def _panel_potential(
     return out
 
 
-def _surface_velocity(
+def _sampled_surface_velocity(
     panel: PanelMetrics3D,
     mu: np.ndarray,
     sigma: np.ndarray,
     freestream: np.ndarray,
 ) -> np.ndarray:
-    """Tangential velocity from the exterior potential gradient.
+    """Tangential velocity from the exterior potential, for a closed body.
 
     Samples sit just outside the surface. Differencing μ between centroids
     mixes the cap and the side wall on a coarse triangulation and reports a
@@ -227,6 +241,66 @@ def _surface_velocity(
     velocity = freestream[None, :] + g1[:, None] * t1 + g2[:, None] * t2
     velocity = velocity - normals * np.sum(velocity * normals, axis=1, keepdims=True)
     return velocity
+
+
+def _doublet_gradient_velocity(
+    panel: PanelMetrics3D,
+    mu: np.ndarray,
+    freestream: np.ndarray,
+) -> np.ndarray:
+    """Exterior tangential speed on an open wing from the doublet sheet.
+
+    The interior condition absorbs the onset, so on a non-lifting surface
+    μ tracks ``-V∞·r``. The tangential perturbation is the chordwise
+    derivative of ``μ + V∞·r``. An off-body sample of one constant-strength
+    face never sees the trailing-edge jump, and a neighbor difference
+    across a cosine-clustered edge divides a smooth doublet by a vanishing
+    step. Each spanwise strip is therefore fit as one polynomial in x.
+    """
+
+    centroids = np.asarray(panel["centroids"], dtype=np.float64)
+    normals = np.asarray(panel["normals"], dtype=np.float64)
+    count = int(mu.shape[0])
+    perturbation = mu + centroids @ freestream
+    slope = np.zeros(count, dtype=np.float64)
+    span = float(np.ptp(centroids[:, 1]))
+    dy = max(span / 40.0, 1e-6)
+    ybin = np.round((centroids[:, 1] - float(np.min(centroids[:, 1]))) / dy).astype(np.int64)
+    side = (normals[:, 2] >= 0.0).astype(np.int64)
+    # One fit per strip, not a walk over panels. The strips are independent.
+    for bucket in np.unique(ybin):
+        for which in (0, 1):
+            idx = np.flatnonzero((ybin == bucket) & (side == which))
+            if idx.size < 6:
+                continue
+            order = np.argsort(centroids[idx, 0], kind="mergesort")
+            idx = idx[order]
+            chord = centroids[idx, 0]
+            chord_span = float(chord[-1] - chord[0])
+            if chord_span < 1e-8:
+                continue
+            coordinate = (chord - float(chord[0])) / chord_span
+            degree = min(4, int(idx.size) - 1)
+            basis = np.vander(coordinate, N=degree + 1, increasing=False)
+            coeff, *_rest = np.linalg.lstsq(basis, perturbation[idx], rcond=1e-12)
+            slope[idx] = np.polyval(np.polyder(coeff), coordinate) / chord_span
+    velocity = np.broadcast_to(freestream, (count, 3)).copy()
+    velocity[:, 0] += slope
+    velocity -= normals * np.sum(velocity * normals, axis=1, keepdims=True)
+    return velocity
+
+
+def _surface_velocity(
+    panel: PanelMetrics3D,
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    freestream: np.ndarray,
+) -> np.ndarray:
+    """Tangential velocity used for the surface pressure."""
+
+    if panel["is_closed"]:
+        return _sampled_surface_velocity(panel, mu, sigma, freestream)
+    return _doublet_gradient_velocity(panel, mu, freestream)
 
 
 def solve_3d(
@@ -276,12 +350,19 @@ def solve_3d(
     for start, _omega, source_phi in _batched(inside, all_tris, all_areas, batch):
         stop = start + source_phi.shape[0]
         _replace_source_diagonal(source_phi, start, all_areas)
-        source_rhs[start:stop] = -(source_phi @ all_sigma)
+        # Interior Dirichlet: φ_μ + φ_σ + V∞·r = 0 at the interior point.
+        # Omitting the onset leaves a right-hand side of panel scale, and the
+        # trailing-edge jump then collapses as the chordwise mesh is refined.
+        source_rhs[start:stop] = -(source_phi @ all_sigma) - inside[start:stop] @ freestream
 
     matrix = np.zeros((count, count), dtype=np.float64)
     for start, omega, _source in _batched(inside, tris, areas, batch):
         stop = start + omega.shape[0]
         matrix[start:stop] = omega / _FOUR_PI
+    # Body self solid-angle is 1/2 on the interior. Set it before the wake
+    # is added: a later overwrite would delete the wake influence on the
+    # trailing-edge rows, which is the near-field Kutta coupling.
+    np.fill_diagonal(matrix, 0.5)
     # Wake columns: μ_wake = μ_upper - μ_lower, not an extra unknown.
     if wake.shape[0] and upper_idx.size > 1:
         order = np.argsort(centroids[upper_idx, 1])
@@ -291,7 +372,11 @@ def solve_3d(
         station_count = int(ordered_u.size - 1)
         for start, omega, _source in _batched(inside, wake, wake_areas, batch):
             block = omega / _FOUR_PI
-            jump_index = np.repeat(np.arange(station_count), 2)
+            # _wake_triangles concatenates every strip's first triangle,
+            # then every strip's second. Both belong to that strip.
+            jump_index = np.concatenate(
+                (np.arange(station_count, dtype=np.int64), np.arange(station_count, dtype=np.int64))
+            )
             if jump_index.shape[0] != wake.shape[0] or station_count < 1:
                 break
             selector = np.zeros((wake.shape[0], station_count), dtype=np.float64)
@@ -300,7 +385,6 @@ def solve_3d(
             row = slice(start, start + summed.shape[0])
             matrix[row, ordered_u[:-1]] += summed
             matrix[row, ordered_l[:-1]] -= summed
-    np.fill_diagonal(matrix, 0.5)
 
     if count <= int(dense_panel_limit):
         try:
