@@ -320,6 +320,8 @@ Re_θ = Ue θ / ν
 
 Laminar separation onset: `λ <= -0.09`.
 
+When that station is strictly upstream of Michel transition, the side separates laminar and Head does not start. When the two criteria first meet on the same station, the march transitions and Head starts. A tie is not laminar separation: both thresholds are crossed inside one mesh interval, and the turbulent closure is the one that can carry the adverse gradient.
+
 **Transition — Michel**
 
 ```text
@@ -344,6 +346,8 @@ Cf = 0.246 * 10^(−0.678 H) * Re_θ^(−0.268)
 ```
 
 Turbulent separation onset: `H >= 2.8` or `Cf <= 0`.
+
+Intervals shorter than a quarter of the median spacing form the trailing-edge cluster. Their edge-speed slope is held at the last resolved station, for both `λ` and the Head step. A shape factor that crosses 2.8 only inside that cluster, while the last resolved station is still below 2.8, does not open a separation decision. A crossing on a resolved station still does.
 
 **Thickness estimate `δ`**
 

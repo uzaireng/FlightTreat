@@ -48,6 +48,45 @@ def _march_speed(edge_speed: np.ndarray) -> np.ndarray:
     return flattened
 
 
+def _trailing_cluster(arc: np.ndarray) -> np.ndarray:
+    """Stations whose gap to the trailing edge is below a quarter of the median spacing.
+
+    Cosine clustering makes the last intervals a few thousandths of the chord.
+    Dividing a small edge-speed change by that gap produces a slope of tens,
+    and one explicit step then drives the shape factor through the separation
+    threshold. The leading edge is clustered too, but this mask is only the
+    unresolved suffix: it stops at the first gap that is at least the limit.
+    """
+
+    mask = np.zeros(arc.shape[0], dtype=bool)
+    if arc.size < 4:
+        return mask
+    gaps = np.diff(arc)
+    positive = gaps[gaps > 0.0]
+    if positive.size == 0:
+        return mask
+    short = gaps < 0.25 * float(np.median(positive))
+    resolved = np.flatnonzero(~short)
+    if resolved.size == 0:
+        return mask
+    mask[int(resolved[-1]) + 1 :] = True
+    return mask
+
+
+def _edge_slope(arc: np.ndarray, edge_speed: np.ndarray) -> np.ndarray:
+    """Edge-speed slope, with the trailing-edge cluster held at the last resolved value."""
+
+    if arc.size < 2:
+        return np.zeros(arc.shape, dtype=np.float64)
+    slope = np.gradient(np.asarray(edge_speed, dtype=np.float64), arc)
+    cluster = _trailing_cluster(arc)
+    resolved = np.flatnonzero(~cluster)
+    if np.any(cluster) and resolved.size:
+        slope = np.array(slope, copy=True)
+        slope[cluster] = slope[int(resolved[-1])]
+    return slope
+
+
 def _thwaites_side(
     arc: np.ndarray,
     edge_speed: np.ndarray,
@@ -64,7 +103,7 @@ def _thwaites_side(
     integral = np.zeros(s.shape, dtype=np.float64)
     if s.size > 1:
         integral[1:] = cumulative_trapezoid(integrand, s)
-    due = np.gradient(ue, s) if s.size > 1 else np.zeros(s.shape, dtype=np.float64)
+    due = _edge_slope(s, ue)
     ue_safe = np.maximum(ue, 1e-8)
     theta2 = 0.45 * nu * integral / ue_safe ** 6
     stagnating = (ue < 1e-4) & (due > 0.0)
@@ -123,7 +162,8 @@ def _head_from(
 
     s = np.asarray(arc, dtype=np.float64)
     ue = np.maximum(np.asarray(edge_speed, dtype=np.float64), 0.0)
-    due = np.gradient(ue, s) if s.size > 1 else np.zeros(s.shape, dtype=np.float64)
+    due = _edge_slope(s, ue)
+    cluster = _trailing_cluster(s)
     theta = np.array(theta, dtype=np.float64, copy=True)
     shape = np.array(shape, dtype=np.float64, copy=True)
     cf = np.array(cf, dtype=np.float64, copy=True)
@@ -147,7 +187,15 @@ def _head_from(
         cf[index] = cf_i
         theta[index + 1] = theta_new
         shape[index + 1] = h_new
-        if h_new >= 2.8 or cf_i <= 0.0:
+        # A shape factor that crosses 2.8 only inside the trailing cluster,
+        # while the last resolved station is still attached, is the
+        # clustered edge-speed drop rather than a resolved separation.
+        resolved_attached = False
+        if bool(cluster[index + 1]):
+            upstream = np.flatnonzero(~cluster[: index + 1])
+            incoming = float(shape[int(upstream[-1])]) if upstream.size else h_i
+            resolved_attached = incoming < 2.8 and cf_i > 0.0
+        if (h_new >= 2.8 or cf_i <= 0.0) and not resolved_attached:
             separated_at = index + 1
             theta[index + 1 :] = theta_new
             shape[index + 1 :] = h_new
@@ -182,7 +230,12 @@ def _side_state(
     turbulent = np.zeros(s.shape, dtype=bool)
     separated_at = -1
 
-    if laminar_sep >= 0 and (transition is None or laminar_sep <= transition):
+    # A tie is transition. Thwaites λ and Michel's criterion often cross
+    # between the same two stations, so both first light on one index.
+    # Laminar separation wins only when it is strictly upstream and the
+    # turbulent closure was never reached. Starting Head at the tied
+    # station lets the turbulent layer carry the adverse gradient.
+    if laminar_sep >= 0 and (transition is None or laminar_sep < transition):
         theta = _freeze(theta, laminar_sep)
         shape = _freeze(shape, laminar_sep)
         cf = _freeze(cf, laminar_sep)
