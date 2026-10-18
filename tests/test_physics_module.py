@@ -1,4 +1,9 @@
-"""Module 3 acceptance checks: lift, pressure, boundary layer, and fixtures."""
+"""Module 3 acceptance checks: lift, pressure, boundary layer, and fixtures.
+
+The rectangular-wing, swept-planform, and cruise skin-friction tests lock
+the corrected trailing-edge jump, planform area, and boundary-layer march.
+Each records the calculation and the failure it replaced.
+"""
 
 from __future__ import annotations
 
@@ -10,12 +15,16 @@ import numpy as np
 _SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(_SRC))
 
+from aero_module import AeroEngine  # noqa: E402
 from geo_module import GeometryEngine  # noqa: E402
 from math_module import MeshEngine  # noqa: E402
 from physics_module import (  # noqa: E402
     InvalidFlowConditionError,
     PhysicsEngine,
 )
+from physics_module.boundary_layer_1d import _side_state  # noqa: E402
+from physics_module.forces_and_moments import _reference_area_3d  # noqa: E402
+from physics_module.solver_3d import _trailing_panels  # noqa: E402
 from physics_module.physics_skeleton import validate_physics_output  # noqa: E402
 from shared.pipeline_runner import run_physics_module_sample  # noqa: E402
 
@@ -34,6 +43,67 @@ def _flow(alpha: float, regime: str = "inviscid") -> tuple[dict, dict]:
     return (
         {"alpha_deg": alpha, "reynolds": 5.0e5, "mach": 0.0, "v_inf": 1.0, "rho": 1.225},
         {"regime": regime},
+    )
+
+
+# Audited rectangular cruise wing: NACA 0012, chord 0.9, span 6, alpha 4 deg.
+# Planform area of a constant-chord wing is chord times span. A spanwise
+# shear (sweep) has unit Jacobian, so it does not change that area.
+_WING_CHORD = 0.9
+_WING_SPAN = 6.0
+_WING_ALPHA_DEG = 4.0
+# One percent of planform. The outline nodes sit on x in [0, chord] and
+# y in [-span/2, span/2], so a true planform integral is exact at this
+# geometry. One percent is far above faceting roundoff and far below the
+# centroid-box errors this suite is meant to catch: the tip centroids stop
+# a strip short of the tip (several percent of span at the station counts
+# below), and a swept x-extent adds about (span/2)*tan(sweep).
+_PLANFORM_RTOL = 0.01
+
+
+def _wing_mesh(sweep_deg: float, num_sections: int, airfoil_points: int):
+    return _mesh(
+        {
+            "type": "wing",
+            "mode": "3D",
+            "airfoil": "0012",
+            "chord": _WING_CHORD,
+            "span": _WING_SPAN,
+            "sweep_deg": sweep_deg,
+            "dihedral_deg": 0.0,
+            "num_sections": num_sections,
+            "airfoil_points": airfoil_points,
+        },
+        {"normal_orientation": "outward", "require_closed_3d": False},
+    )
+
+
+def _helmbold_cl(aspect_ratio: float, alpha_deg: float) -> float:
+    """Unswept finite-wing lift from Helmbold's equation at section slope 2π.
+
+    a = a0 / (sqrt(1 + (a0 / (π AR))^2) + a0 / (π AR)), with a0 = 2π.
+    """
+
+    a0 = 2.0 * np.pi
+    k = a0 / (np.pi * aspect_ratio)
+    slope = a0 / (np.sqrt(1.0 + k * k) + k)
+    return float(slope * np.deg2rad(alpha_deg))
+
+
+def _assert_planform_area(s_ref: float, sweep_deg: float) -> None:
+    planform = _WING_CHORD * _WING_SPAN
+    sweep_offset = 0.5 * _WING_SPAN * np.tan(np.deg2rad(sweep_deg))
+    bounding_box = (_WING_CHORD + sweep_offset) * _WING_SPAN
+    if abs(sweep_deg) < 1e-8:
+        detail = "A centroid bounding box stops short of the tip and the trailing edge."
+    else:
+        detail = f"An x-bounding box inflated by the sweep offset would be {bounding_box:.4f}."
+    _assert(
+        abs(s_ref - planform) <= _PLANFORM_RTOL * planform,
+        (
+            f"s_ref {s_ref:.4f} is outside {_PLANFORM_RTOL:.0%} of the "
+            f"constant-chord planform {planform:.4f}. {detail}"
+        ),
     )
 
 
@@ -102,9 +172,26 @@ def test_cylinder_nose_pressure() -> None:
     side = float(np.mean(cp[np.abs(panel["normals"][:, 1]) > 0.8]))
     _assert(cap > side, f"nose Cp {cap} is not above side-wall Cp {side}")
     _assert(np.all(np.isfinite(cp)), "cylinder Cp must be finite")
+    # Closed body: projected cross-section from the two largest centroid
+    # extents. A wing-station integral must not replace this.
+    extents = np.ptp(panel["centroids"], axis=0)
+    order = np.argsort(extents)
+    cross_section = float(extents[order[-1]] * extents[order[-2]])
+    _assert(
+        abs(float(out["loads"]["s_ref"]) - cross_section) < 1e-9,
+        f"cylinder s_ref {out['loads']['s_ref']} left the projected cross-section {cross_section}",
+    )
 
 
 def test_separated_march_returns_payload() -> None:
+    """Higher-angle separation check, kept beside the 4 deg cruise Cf test.
+
+    At 10 deg the march is expected to separate. The payload must still
+    return, with finite pressure and a warning. That is a different
+    requirement from cruise, where a transition/separation tie must not
+    wipe skin friction off the aft surface.
+    """
+
     mesh = _mesh(
         {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
         {"n_panels": 64, "n_x": 24, "n_y": 16, "clustering": "cosine"},
@@ -154,6 +241,324 @@ def test_mesh_arrays_are_not_mutated() -> None:
     _assert(np.array_equal(panel["nodes"], before), "solver wrote into the mesh nodes")
 
 
+def test_rectangular_wing_planform_and_lift() -> None:
+    """NACA 0012 rectangular wing, chord 0.9, span 6, alpha 4 deg.
+
+    The skin uses 12 spanwise sections and 32 profile points. That is the
+    audited planform with a coarser triangulation than the pipeline case
+    (20 sections, 64 points, about 2400 panels). The coarser skin stays
+    on a dense solve of a few seconds. Planform area does not depend on
+    that count. The lift target is a continuum finite-wing estimate, and
+    the tolerance below is wider than normal panel truncation between
+    this skin and a finer one.
+
+    Reference area is the geometric planform, 0.9 * 6 = 5.40. See
+    ``_PLANFORM_RTOL``.
+
+    Lift. Aspect ratio is span/chord = 6.667. Thin-aerofoil section slope
+    a0 = 2π per radian, and Helmbold's unswept-wing equation supplies the
+    finite-wing slope (it sits slightly below elliptic lifting line, which
+    is the right side for a rectangular planform). The absolute band is
+    ±0.08, the same allowance ``test_flat_plate_and_naca_lift`` already
+    uses for a NACA 0012 panel solution. On a lift coefficient near 0.33
+    that is about a quarter of the estimate: enough for a rectangular
+    planform and for this triangulation, and not a fit to a measured run.
+    """
+
+    mesh = _wing_mesh(sweep_deg=0.0, num_sections=12, airfoil_points=32)
+    solved = PhysicsEngine().solve_from_mesh(mesh, *_flow(_WING_ALPHA_DEG))
+    report = AeroEngine().analyze_from_solution(mesh, solved)
+    s_ref = float(report["reference"]["s_ref"])
+    cl = float(report["coefficients"]["cl"])
+    _assert(abs(s_ref - float(solved["loads"]["s_ref"])) < 1e-9, "aero reference area was rescaled")
+    _assert(abs(cl - float(solved["loads"]["cl"])) < 1e-9, "aero lift coefficient was rescaled")
+    aspect = _WING_SPAN / _WING_CHORD
+    expected = _helmbold_cl(aspect, _WING_ALPHA_DEG)
+    tolerance = 0.08
+    gaps: list[str] = []
+    try:
+        _assert_planform_area(s_ref, sweep_deg=0.0)
+    except AssertionError as exc:
+        gaps.append(str(exc))
+    try:
+        _assert(
+            abs(cl - expected) < tolerance,
+            (
+                f"rectangular-wing Cl {cl:.4f} is outside Helmbold {expected:.4f} +/- {tolerance:.2f} "
+                f"(AR={aspect:.3f}, alpha={_WING_ALPHA_DEG:.1f} deg, a0=2*pi)"
+            ),
+        )
+    except AssertionError as exc:
+        gaps.append(str(exc))
+    panel = mesh["panel_3d"]
+    assert panel is not None
+    normals = np.asarray(panel["normals"], dtype=np.float64)
+    areas = np.asarray(panel["areas"], dtype=np.float64)
+    cp = np.asarray(solved["inviscid"]["cp_inviscid"], dtype=np.float64)
+    upper = normals[:, 2] >= 0.0
+    cp_upper = float(np.sum(cp[upper] * areas[upper]) / np.sum(areas[upper]))
+    cp_lower = float(np.sum(cp[~upper] * areas[~upper]) / np.sum(areas[~upper]))
+    try:
+        # Positive incidence puts suction on the upper surface. The gap is
+        # only required to be a real fraction of the lift coefficient, not
+        # a measured pressure plot.
+        _assert(
+            cp_upper < cp_lower - 0.05,
+            f"upper Cp {cp_upper:.3f} is not below lower Cp {cp_lower:.3f}",
+        )
+    except AssertionError as exc:
+        gaps.append(str(exc))
+    upper_idx, lower_idx = _trailing_panels(panel)
+    centroids = np.asarray(panel["centroids"], dtype=np.float64)
+    order = np.argsort(centroids[upper_idx, 1])
+    mu = np.asarray(solved["inviscid"]["mu"], dtype=np.float64)
+    jump = mu[upper_idx[order]] - mu[lower_idx[order]]
+    y = centroids[upper_idx[order], 1]
+    central = np.abs(y - float(np.mean(y))) <= 0.25 * float(np.ptp(y))
+    try:
+        _assert(
+            float(np.mean(jump[central])) > 0.0,
+            f"central trailing-edge doublet jump {float(np.mean(jump[central])):.4f} is not lifting",
+        )
+    except AssertionError as exc:
+        gaps.append(str(exc))
+    if gaps:
+        raise AssertionError(" ".join(gaps))
+
+
+def test_wing_direct_and_gmres_lift_agree() -> None:
+    """The same wake matrix, factored directly and by GMRES.
+
+    Eight sections keep this on a small dense matrix. The absolute lift
+    band is the finer rectangular case. Here the two solvers must return
+    the same coefficient: GMRES stops at 1e-6 relative residual, so 0.005
+    on Cl is a wide envelope around that residual, not a second theory.
+    """
+
+    mesh = _wing_mesh(sweep_deg=0.0, num_sections=8, airfoil_points=24)
+    flow, params = _flow(_WING_ALPHA_DEG)
+    direct = PhysicsEngine().solve_from_mesh(mesh, flow, params)
+    iterative = PhysicsEngine().solve_from_mesh(mesh, flow, {**params, "dense_panel_limit": 1})
+    _assert_planform_area(float(direct["loads"]["s_ref"]), sweep_deg=0.0)
+    _assert_planform_area(float(iterative["loads"]["s_ref"]), sweep_deg=0.0)
+    _assert(
+        abs(float(direct["loads"]["cl"]) - float(iterative["loads"]["cl"])) < 0.005,
+        f"direct Cl {direct['loads']['cl']:.4f} vs GMRES {iterative['loads']['cl']:.4f}",
+    )
+    _assert(any("GMRES" in note for note in iterative["warnings"]), "GMRES path was not used")
+
+
+def test_swept_constant_chord_planform_area() -> None:
+    """Constant-chord NACA 0012 at 0 deg and 25 deg sweep, zero dihedral.
+
+    Same chord and span as the rectangular cruise wing, so both planforms
+    are 5.40. Sweep shifts each section aft by |y| tan(Λ). The global
+    x-extent then grows by (span/2) tan(Λ) ≈ 1.40, and a bounding box of
+    that extent times span is about 13.8. Section chord is unchanged
+    because the shear Jacobian is 1, so the two reference areas have to
+    match each other as well as the planform. Eight sections are enough:
+    the difference is geometric. The relative match uses 1e-9, which is
+    roundoff on a trapezoid of identical section chords.
+    """
+
+    unswept = PhysicsEngine().solve_from_mesh(
+        _wing_mesh(sweep_deg=0.0, num_sections=8, airfoil_points=24),
+        *_flow(_WING_ALPHA_DEG),
+    )
+    sweep = 25.0
+    swept = PhysicsEngine().solve_from_mesh(
+        _wing_mesh(sweep_deg=sweep, num_sections=8, airfoil_points=24),
+        *_flow(_WING_ALPHA_DEG),
+    )
+    area_0 = float(unswept["loads"]["s_ref"])
+    area_25 = float(swept["loads"]["s_ref"])
+    _assert_planform_area(area_0, sweep_deg=0.0)
+    _assert_planform_area(area_25, sweep_deg=sweep)
+    _assert(
+        abs(area_25 - area_0) <= 1e-9 * max(area_0, 1.0),
+        f"sweep changed the planform from {area_0:.6f} to {area_25:.6f}",
+    )
+
+
+def test_open_patch_keeps_centroid_box_area() -> None:
+    """An open surface with no spanwise stations is not given a wing chord.
+
+    Every vertex has its own y, so a station chord cannot be formed.
+    ``s_ref`` stays the product of the centroid x-extent and y-extent.
+    """
+
+    facets = np.array(
+        [
+            [[0.0, 0.0, 0.0], [1.0, 0.3, 0.0], [0.2, 1.0, 0.1]],
+            [[1.0, 0.3, 0.0], [1.2, 1.1, 0.0], [0.2, 1.0, 0.1]],
+        ],
+        dtype=np.float64,
+    )
+    centroids = np.mean(facets, axis=1)
+    mesh = {
+        "panel_3d": {
+            "facets": facets,
+            "centroids": centroids,
+            "areas": np.ones(facets.shape[0], dtype=np.float64),
+            "is_closed": False,
+        }
+    }
+    s_ref, _length, _origin, _centroid = _reference_area_3d(mesh)  # type: ignore[arg-type]
+    expected = float(np.ptp(centroids[:, 0]) * np.ptp(centroids[:, 1]))
+    _assert(abs(s_ref - expected) < 1e-12, f"patch s_ref {s_ref} is not the centroid box {expected}")
+
+
+def test_cruise_transition_does_not_zero_aft_skin_friction() -> None:
+    """NACA 0012 at 4 deg and Re_c = 500_000 must keep aft skin friction.
+
+    This angle is well below stall for a 0012 at this Reynolds number
+    (stall in the Abbott & von Doenhoff data is near 12–16 deg). On the
+    upper surface the suction peak is forward, Michel transition and the
+    Thwaites laminar-separation threshold (λ ≤ -0.09) land near the same
+    station, and the march has to enter the turbulent closure there. A
+    tie that freezes Cf to 0 from that station to the trailing edge is
+    the failure. The 10 deg case in ``test_separated_march_returns_payload``
+    remains the check that a genuinely high-incidence march may separate.
+
+    Stations: upper surface, 0.40 ≤ x/c ≤ 0.90. Transition on this
+    section is expected ahead of 0.40c, and the last 10 percent of chord
+    is left out so a short trailing-edge patch is not the whole answer.
+    Flat-plate turbulent skin friction, Cf ≈ 0.059 Re_x^{-1/5}, is about
+    0.005 at x/c = 0.40 and Re_c = 5e5. The floor 5e-4 is about a tenth
+    of that, which still clears an attached turbulent layer in an adverse
+    gradient and rejects an exact zero. At least 70 percent of the window
+    must clear the floor, so one station inside a bubble does not fail
+    the test and a wiped aft surface does.
+    """
+
+    mesh = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
+        {"n_panels": 64, "n_x": 24, "n_y": 16, "clustering": "cosine"},
+    )
+    solved = PhysicsEngine().solve_from_mesh(mesh, *_flow(4.0, "viscous_inviscid"))
+    ibl = solved["ibl"]
+    stations = mesh["ibl_1d"]
+    assert ibl is not None and stations is not None
+    x_over_c = np.asarray(stations["xy_upper"], dtype=np.float64)[:, 0]
+    cf = np.asarray(ibl["cf_upper"], dtype=np.float64)
+    window = (x_over_c >= 0.40) & (x_over_c <= 0.90)
+    aft = cf[window]
+    _assert(aft.size >= 8, f"aft Cf window has {aft.size} stations")
+    _assert(np.all(np.isfinite(aft)), "aft skin friction must be finite")
+    floor = 5.0e-4
+    fraction = float(np.mean(aft > floor))
+    _assert(
+        fraction >= 0.70,
+        (
+            "upper-surface skin friction is zeroed across the aft surface: "
+            f"median Cf={float(np.median(aft)):.3e}, fraction above {floor:.1e}={fraction:.2f}, "
+            f"transition_s={float(ibl['transition_s_upper']):.4f}, "
+            f"separation_s={float(ibl['separation_s_upper']):.4f}"
+        ),
+    )
+
+
+def test_tied_transition_stays_attached() -> None:
+    """The 4 deg tie must enter Head and must not separate on the trailing cluster.
+
+    Transition on this mesh is near x/c = 0.26. An attached turbulent
+    shape factor on a 0012 in a mild adverse gradient sits near 1.4–1.8;
+    the laminar separation correlation is about 2.99 and Head's own
+    threshold is 2.8. The window 1.2–2.5 is above a laminar Blasius value
+    only at the low end and stops short of either separation threshold,
+    so it passes only if the turbulent march actually ran and stayed
+    attached. Skin friction uses the same floor as the cruise test and a
+    ceiling of 0.02, half the march's own Cf cap, which still sits above
+    the flat-plate turbulent value near 0.005.
+    """
+
+    mesh = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
+        {"n_panels": 64, "n_x": 24, "n_y": 16, "clustering": "cosine"},
+    )
+    solved = PhysicsEngine().solve_from_mesh(mesh, *_flow(4.0, "viscous_inviscid"))
+    ibl = solved["ibl"]
+    stations = mesh["ibl_1d"]
+    assert ibl is not None and stations is not None
+    xy = np.asarray(stations["xy_upper"], dtype=np.float64)
+    window = (xy[:, 0] >= 0.40) & (xy[:, 0] <= 0.90)
+    shape = np.asarray(ibl["shape_h_upper"], dtype=np.float64)[window]
+    cf = np.asarray(ibl["cf_upper"], dtype=np.float64)[window]
+    theta = np.asarray(ibl["theta_upper"], dtype=np.float64)[window]
+    _assert(np.isfinite(ibl["transition_s_upper"]), "upper transition was not recorded")
+    _assert(
+        ibl["transition_s_upper"] < 0.40,
+        f"transition s={ibl['transition_s_upper']:.4f} is not ahead of the aft window",
+    )
+    _assert(
+        not np.isfinite(ibl["separation_s_upper"]),
+        f"upper separation s={ibl['separation_s_upper']} is a tie or a trailing-edge spike",
+    )
+    _assert(np.all(np.isfinite(shape)) and np.all(np.isfinite(cf)) and np.all(np.isfinite(theta)), "aft boundary layer is not finite")
+    _assert(np.all((shape > 1.2) & (shape < 2.5)), f"aft shape factor {float(np.min(shape)):.3f}..{float(np.max(shape)):.3f}")
+    _assert(float(np.median(cf)) > 5.0e-4, f"aft median Cf={float(np.median(cf)):.3e}")
+    _assert(float(np.median(cf)) < 0.02, f"aft median Cf={float(np.median(cf)):.3e} is above a plausible turbulent value")
+    _assert(np.all(theta > 0.0), "momentum thickness vanished in the aft window")
+
+
+def test_laminar_separation_before_transition_still_freezes() -> None:
+    """At 10 deg, Thwaites trips on an earlier station than Michel.
+
+    That ordering is real laminar separation, not the 4 deg tie. Downstream
+    skin friction stays at the separated value of zero. The existing 10 deg
+    test still requires the warning and a finite pressure field.
+    """
+
+    mesh = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
+        {"n_panels": 64, "n_x": 24, "n_y": 16, "clustering": "cosine"},
+    )
+    solved = PhysicsEngine().solve_from_mesh(mesh, *_flow(10.0, "viscous_inviscid"))
+    ibl = solved["ibl"]
+    stations = mesh["ibl_1d"]
+    assert ibl is not None and stations is not None
+    _assert(ibl["separated"], "10 deg march should separate")
+    _assert(np.isfinite(ibl["separation_s_upper"]), "upper separation station missing")
+    _assert(np.isfinite(ibl["transition_s_upper"]), "upper transition station missing")
+    _assert(
+        float(ibl["separation_s_upper"]) < float(ibl["transition_s_upper"]),
+        (
+            f"separation s={ibl['separation_s_upper']:.4f} is not upstream of "
+            f"transition s={ibl['transition_s_upper']:.4f}"
+        ),
+    )
+    arc = np.asarray(stations["s_upper"], dtype=np.float64)
+    downstream = arc >= float(ibl["separation_s_upper"])
+    cf = np.asarray(ibl["cf_upper"], dtype=np.float64)
+    _assert(int(np.count_nonzero(downstream)) >= 4, "separation has too few downstream stations")
+    _assert(float(np.max(np.abs(cf[downstream]))) == 0.0, "laminar separation did not freeze skin friction")
+    _assert(np.all(np.isfinite(cf)), "separated skin friction must stay finite")
+    _assert(any("separated" in note.lower() for note in solved["warnings"]), "separation needs a warning")
+
+
+def test_trailing_edge_cluster_does_not_force_separation() -> None:
+    """A resolved zero pressure gradient plus a clustered trailing-edge drop.
+
+    Median spacing is about 0.04. The last gaps are 0.006 and smaller, under
+    a quarter of that median, so they are the cluster. Edge speed is uniform
+    on the resolved stations, which keeps Thwaites λ at 0, and then falls
+    from 1 to 0.5 across the cluster. That drop is large enough to push a
+    raw dUe/ds through the separation threshold by itself. It must not.
+    Michel still transitions on the flat portion at this Reynolds number.
+    """
+
+    body = np.linspace(0.0, 0.98, 25)
+    arc = np.concatenate((body, np.array([0.990, 0.996, 0.999, 1.0], dtype=np.float64)))
+    speed = np.ones(arc.shape, dtype=np.float64)
+    speed[-4:] = np.array([0.95, 0.80, 0.65, 0.50], dtype=np.float64)
+    state = _side_state(arc, speed, nu=1.0 / 5.0e5)
+    cf = np.asarray(state["cf"], dtype=np.float64)
+    _assert(not bool(state["separated_mask"]), f"cluster drop separated at s={state['separation_s']}")
+    _assert(np.isfinite(float(state["transition_s"])), "flat portion did not transition")
+    _assert(np.all(np.isfinite(cf)), "synthetic skin friction must be finite")
+    _assert(float(np.median(cf[8:20])) > 5.0e-4, f"resolved Cf median={float(np.median(cf[8:20])):.3e}")
+
+
 def test_physics_module_samples() -> None:
     bad = run_physics_module_sample("bad_te_index")
     _assert(bad["error_type"] == "InvalidFlowConditionError", bad["error_type"] or "no error")
@@ -174,5 +579,13 @@ if __name__ == "__main__":
     test_separated_march_returns_payload()
     test_unimplemented_closures_raise()
     test_mesh_arrays_are_not_mutated()
+    test_rectangular_wing_planform_and_lift()
+    test_wing_direct_and_gmres_lift_agree()
+    test_swept_constant_chord_planform_area()
+    test_open_patch_keeps_centroid_box_area()
+    test_cruise_transition_does_not_zero_aft_skin_friction()
+    test_tied_transition_stays_attached()
+    test_laminar_separation_before_transition_still_freezes()
+    test_trailing_edge_cluster_does_not_force_separation()
     test_physics_module_samples()
     print("physics tests passed")
