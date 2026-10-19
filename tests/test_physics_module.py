@@ -23,7 +23,7 @@ from physics_module import (  # noqa: E402
     PhysicsEngine,
 )
 from physics_module.boundary_layer_1d import _side_state  # noqa: E402
-from physics_module.forces_and_moments import _reference_area_3d  # noqa: E402
+from physics_module.forces_and_moments import _reference_area_3d, integrate_loads  # noqa: E402
 from physics_module.solver_3d import _trailing_panels  # noqa: E402
 from physics_module.physics_skeleton import validate_physics_output  # noqa: E402
 from shared.pipeline_runner import run_physics_module_sample  # noqa: E402
@@ -559,6 +559,68 @@ def test_trailing_edge_cluster_does_not_force_separation() -> None:
     _assert(float(np.median(cf[8:20])) > 5.0e-4, f"resolved Cf median={float(np.median(cf[8:20])):.3e}")
 
 
+def test_skin_friction_drag_uses_freestream_dynamic_pressure() -> None:
+    """Local Cf is wall shear over edge dynamic pressure. CD uses freestream q.
+
+    One upper-surface segment, chord 1, tangent along the drag axis, and the
+    unit onset V_inf = 1 used by the load integration. Cf = 0.01 at U_e = 2
+    contributes 0.04. The same segment at U_e = V_inf contributes 0.01.
+    Pressure is zero, so the result is the friction integral alone.
+    """
+
+    def loads(edge_speed: float):
+        cf_upper = np.array([0.01, 0.01], dtype=np.float64)
+        ue_upper = np.array([edge_speed, edge_speed], dtype=np.float64)
+        mesh = {
+            "mode": "2D",
+            "panel_2d": {
+                "normal": np.array([[0.0, 1.0]], dtype=np.float64),
+                "length": np.array([1.0], dtype=np.float64),
+                "collocation": np.array([[0.5, 0.0]], dtype=np.float64),
+                "nodes": np.array([[0.0, 0.0], [1.0, 0.0]], dtype=np.float64),
+                "le_index": 0,
+                "chord": 1.0,
+            },
+            "ibl_1d": {
+                "tangent_upper": np.array([[1.0, 0.0], [1.0, 0.0]], dtype=np.float64),
+                "ds_upper": np.array([1.0], dtype=np.float64),
+                "tangent_lower": np.zeros((0, 2), dtype=np.float64),
+                "ds_lower": np.zeros(0, dtype=np.float64),
+            },
+        }
+        inviscid = {
+            "gamma": None,
+            "cp_inviscid": np.zeros(1, dtype=np.float64),
+        }
+        ibl = {
+            "cf_upper": cf_upper,
+            "cf_lower": np.zeros(0, dtype=np.float64),
+            "ue_upper": ue_upper,
+            "ue_lower": np.zeros(0, dtype=np.float64),
+        }
+        cf_before = cf_upper.copy()
+        ue_before = ue_upper.copy()
+        solved = integrate_loads(mesh, inviscid, ibl, 0.0, False)  # type: ignore[arg-type]
+        _assert(np.array_equal(cf_upper, cf_before), "local Cf was overwritten")
+        _assert(np.array_equal(ue_upper, ue_before), "edge speed was overwritten")
+        return solved
+
+    doubled = loads(2.0)
+    matched = loads(1.0)
+    _assert(abs(doubled["cd_pressure"]) < 1e-12, "pressure drag leaked into the friction fixture")
+    _assert(abs(matched["cd_pressure"]) < 1e-12, "pressure drag leaked into the unit-speed fixture")
+    _assert(
+        abs(doubled["cd_friction"] - 0.04) < 1e-12,
+        f"Ue=2 freestream friction drag is {doubled['cd_friction']}, expected 0.04",
+    )
+    _assert(
+        abs(matched["cd_friction"] - 0.01) < 1e-12,
+        f"Ue=1 freestream friction drag is {matched['cd_friction']}, expected 0.01",
+    )
+    _assert(abs(doubled["cd"] - doubled["cd_friction"]) < 1e-12, "total drag left the friction integral")
+    _assert(abs(matched["cd"] - matched["cd_friction"]) < 1e-12, "unit-speed total drag left the friction integral")
+
+
 def test_physics_module_samples() -> None:
     bad = run_physics_module_sample("bad_te_index")
     _assert(bad["error_type"] == "InvalidFlowConditionError", bad["error_type"] or "no error")
@@ -587,5 +649,6 @@ if __name__ == "__main__":
     test_tied_transition_stays_attached()
     test_laminar_separation_before_transition_still_freezes()
     test_trailing_edge_cluster_does_not_force_separation()
+    test_skin_friction_drag_uses_freestream_dynamic_pressure()
     test_physics_module_samples()
     print("physics tests passed")

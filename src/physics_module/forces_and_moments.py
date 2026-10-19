@@ -8,19 +8,46 @@ import numpy as np
 
 from math_module.math_skeleton import MeshOutput
 
-from .physics_skeleton import IBLSolution, InviscidSolution, SurfaceLoads
+from .physics_skeleton import (
+    IBLSolution,
+    InvalidFlowConditionError,
+    InviscidSolution,
+    SurfaceLoads,
+)
+
+# SurfaceLoads are coefficients at the panel solver's unit onset. Stored
+# edge speed is already U_e / V_inf in that frame, so the freestream factor
+# below divides by this same unit speed.
+_UNIT_FREESTREAM = 1.0
 
 
 def _segment_traction(
     cf: np.ndarray,
     tangent: np.ndarray,
     ds: np.ndarray,
+    edge_speed: np.ndarray,
+    v_inf: float,
 ) -> np.ndarray:
-    """Skin-friction force from station ``Cf`` along a marching branch."""
+    """Skin-friction force from station ``Cf`` along a marching branch.
+
+    ``Cf`` is wall shear divided by the local edge dynamic pressure.
+    Load coefficients divide by freestream dynamic pressure, so each
+    station is weighted by ``(U_e / V_inf)**2`` once, before the segment
+    average. Force direction and segment length are unchanged.
+    """
 
     if ds.size == 0:
         return np.zeros(tangent.shape[1], dtype=np.float64)
-    cf_seg = 0.5 * (cf[:-1] + cf[1:])
+    cf_local = np.asarray(cf, dtype=np.float64)
+    speed = np.asarray(edge_speed, dtype=np.float64)
+    if speed.shape != cf_local.shape:
+        raise InvalidFlowConditionError(
+            "Edge speed and skin friction must share the same stations."
+        )
+    if not np.isfinite(v_inf) or v_inf == 0.0:
+        raise InvalidFlowConditionError("Freestream speed must be finite and non-zero.")
+    cf_freestream = cf_local * (speed / float(v_inf)) ** 2
+    cf_seg = 0.5 * (cf_freestream[:-1] + cf_freestream[1:])
     direction = 0.5 * (tangent[:-1] + tangent[1:])
     norm = np.linalg.norm(direction, axis=1)
     direction = direction / np.maximum(norm[:, None], 1e-14)
@@ -46,10 +73,18 @@ def _loads_2d(
     if ibl is not None and mesh["ibl_1d"] is not None:
         stations = mesh["ibl_1d"]
         friction = _segment_traction(
-            ibl["cf_upper"], stations["tangent_upper"], stations["ds_upper"]
+            ibl["cf_upper"],
+            stations["tangent_upper"],
+            stations["ds_upper"],
+            ibl["ue_upper"],
+            _UNIT_FREESTREAM,
         )
         friction = friction + _segment_traction(
-            ibl["cf_lower"], stations["tangent_lower"], stations["ds_lower"]
+            ibl["cf_lower"],
+            stations["tangent_lower"],
+            stations["ds_lower"],
+            ibl["ue_lower"],
+            _UNIT_FREESTREAM,
         )
     drag_hat = np.array([np.cos(alpha_rad), np.sin(alpha_rad)], dtype=np.float64)
     lift_hat = np.array([-np.sin(alpha_rad), np.cos(alpha_rad)], dtype=np.float64)
