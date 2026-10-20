@@ -22,7 +22,7 @@ from physics_module import (  # noqa: E402
     InvalidFlowConditionError,
     PhysicsEngine,
 )
-from physics_module.boundary_layer_1d import _side_state  # noqa: E402
+from physics_module.boundary_layer_1d import _march_speed, _side_state, _thwaites_side  # noqa: E402
 from physics_module.forces_and_moments import _reference_area_3d, integrate_loads  # noqa: E402
 from physics_module.solver_3d import _trailing_panels  # noqa: E402
 from physics_module.physics_skeleton import validate_physics_output  # noqa: E402
@@ -621,6 +621,125 @@ def test_skin_friction_drag_uses_freestream_dynamic_pressure() -> None:
     _assert(abs(matched["cd"] - matched["cd_friction"]) < 1e-12, "unit-speed total drag left the friction integral")
 
 
+def _lambda_at(arc: np.ndarray, edge_speed: np.ndarray, index: int, nu: float) -> float:
+    """Thwaites λ on the marched edge speed, the value the hysteresis test uses."""
+
+    marched = _march_speed(edge_speed)
+    _theta, _shape, _cf, lam, _delta_star = _thwaites_side(arc, marched, nu)
+    return float(lam[index])
+
+
+def _aft_deceleration(arc: np.ndarray, drop: float) -> np.ndarray:
+    """Attached front, then a linear aft deceleration. The leading edge stays the slowest early station."""
+
+    speed = np.ones(arc.size, dtype=np.float64)
+    speed[0] = 0.99
+    aft = arc.size // 2
+    speed[aft:] = np.linspace(1.05, 1.05 - drop, arc.size - aft)
+    return speed
+
+
+def _drop_for_lambda(arc: np.ndarray, index: int, nu: float, target: float) -> float:
+    low = 0.02
+    high = 0.2
+    for _ in range(40):
+        mid = 0.5 * (low + high)
+        if _lambda_at(arc, _aft_deceleration(arc, mid), index, nu) < target:
+            high = mid
+        else:
+            low = mid
+    return 0.5 * (low + high)
+
+
+def test_marginal_rebound_does_not_revoke_laminar_separation() -> None:
+    """A prior laminar separation survives λ ≈ -0.089 and releases above -0.08.
+
+    New separation still requires λ ≤ -0.09. The station just above that
+    line is not a new separation, but it is inside the retain band, so the
+    previous station stays frozen. Past -0.08 the same retained index is
+    dropped.
+    """
+
+    arc = np.linspace(0.0, 1.0, 60)
+    nu = 1.0 / 5.0e5
+    station = 50
+    marginal_drop = _drop_for_lambda(arc, station, nu, -0.089)
+    marginal = _aft_deceleration(arc, marginal_drop)
+    marginal_lambda = _lambda_at(arc, marginal, station, nu)
+    _assert(
+        -0.09 < marginal_lambda <= -0.08 and abs(marginal_lambda + 0.089) < 1.0e-4,
+        f"marginal λ at the retained station is {marginal_lambda:.5f}, not about -0.089",
+    )
+    fresh = _side_state(arc, marginal, nu=nu)
+    _assert(
+        int(fresh["separated_at"]) != station,
+        "the -0.09 rule selected a station that is only inside the retain band",
+    )
+    held = _side_state(arc, marginal, nu=nu, retained_index=station)
+    _assert(int(held["separated_at"]) == station, "marginal rebound revoked the previous separation")
+    _assert(float(np.max(np.abs(held["cf"][station:]))) == 0.0, "retained separation did not freeze skin friction")
+
+    recovered_drop = _drop_for_lambda(arc, station, nu, -0.07)
+    recovered = _aft_deceleration(arc, recovered_drop)
+    recovered_lambda = _lambda_at(arc, recovered, station, nu)
+    _assert(recovered_lambda > -0.08, f"recovery λ {recovered_lambda:.5f} did not pass the release level")
+    released = _side_state(arc, recovered, nu=nu, retained_index=station)
+    _assert(
+        int(released["separated_at"]) != station,
+        "λ beyond the release level kept the old separation station",
+    )
+
+
+def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
+    """160-panel NACA 0012 at 4 deg must stop flipping separation.
+
+    The station just upstream of transition was crossing λ = -0.09 every
+    iteration, and each flip replaced the aft displacement thickness. The
+    residual then stayed near 2e-2 through iteration 8 and grew when the
+    loop was continued. Retention holds that station until λ recovers.
+    The 64-panel mesh never crosses the threshold, so its upper surface
+    stays attached and the march still converges inside the same cap.
+    """
+
+    fine = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 160},
+        {
+            "n_panels": 160,
+            "n_x": 121,
+            "n_y": 61,
+            "clustering": "cosine",
+            "le_cluster_factor": 1.0,
+            "te_cluster_factor": 1.0,
+        },
+    )
+    solved = PhysicsEngine().solve_from_mesh(fine, *_flow(4.0, "viscous_inviscid"))
+    ibl = solved["ibl"]
+    assert ibl is not None
+    _assert(solved["converged"], f"fine cruise coupling did not converge, residual={solved['residual']:.3e}")
+    _assert(solved["residual"] < 1.0e-4, f"fine cruise residual {solved['residual']:.3e}")
+    _assert(int(solved["vic_iterations"]) <= 8, f"fine cruise used {solved['vic_iterations']} iterations")
+    _assert(np.isfinite(float(ibl["separation_s_upper"])), "upper laminar separation was not retained")
+    _assert(
+        float(ibl["separation_s_upper"]) < float(ibl["transition_s_upper"]),
+        "retained upper separation is not upstream of transition",
+    )
+    _assert(float(ibl["separation_s_upper"]) < 0.5, "upper separation moved to the trailing edge")
+
+    coarse = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
+        {"n_panels": 64, "n_x": 24, "n_y": 16, "clustering": "cosine"},
+    )
+    coarse_solved = PhysicsEngine().solve_from_mesh(coarse, *_flow(4.0, "viscous_inviscid"))
+    coarse_ibl = coarse_solved["ibl"]
+    assert coarse_ibl is not None
+    _assert(coarse_solved["converged"], f"64-panel control did not converge, residual={coarse_solved['residual']:.3e}")
+    _assert(coarse_solved["residual"] < 1.0e-4, f"64-panel residual {coarse_solved['residual']:.3e}")
+    _assert(
+        not np.isfinite(float(coarse_ibl["separation_s_upper"])),
+        f"64-panel upper surface separated at {coarse_ibl['separation_s_upper']}",
+    )
+
+
 def test_physics_module_samples() -> None:
     bad = run_physics_module_sample("bad_te_index")
     _assert(bad["error_type"] == "InvalidFlowConditionError", bad["error_type"] or "no error")
@@ -650,5 +769,7 @@ if __name__ == "__main__":
     test_laminar_separation_before_transition_still_freezes()
     test_trailing_edge_cluster_does_not_force_separation()
     test_skin_friction_drag_uses_freestream_dynamic_pressure()
+    test_marginal_rebound_does_not_revoke_laminar_separation()
+    test_fine_cruise_coupling_converges_without_separation_chatter()
     test_physics_module_samples()
     print("physics tests passed")

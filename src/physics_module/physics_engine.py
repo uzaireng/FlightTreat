@@ -154,6 +154,33 @@ def _separation_warnings(ibl: IBLSolution) -> list[str]:
     return notes
 
 
+def _retained_laminar_index(
+    previous: IBLSolution | None,
+    arc: np.ndarray,
+    separation_key: str,
+    transition_key: str,
+) -> int | None:
+    """Station index of a laminar separation retained from the previous pass.
+
+    Turbulent separation is not retained. A separation at or downstream of
+    transition was not the laminar-freeze branch.
+    """
+
+    if previous is None:
+        return None
+    separation = float(previous[separation_key])  # type: ignore[literal-required]
+    transition = float(previous[transition_key])  # type: ignore[literal-required]
+    if not np.isfinite(separation):
+        return None
+    if np.isfinite(transition) and separation >= transition:
+        return None
+    stations = np.asarray(arc, dtype=np.float64)
+    index = int(np.argmin(np.abs(stations - separation)))
+    if abs(float(stations[index]) - separation) > 1e-6:
+        return None
+    return index
+
+
 def _delta_residual(current: IBLSolution, previous: IBLSolution | None, chord: float) -> float:
     if previous is None:
         values = np.concatenate((current["delta_star_upper"], current["delta_star_lower"]))
@@ -298,6 +325,12 @@ class PhysicsEngine:
                 panel,
                 closure=chosen["ibl_closure"],
                 fail_on_separation=bool(chosen["fail_on_separation"]),
+                retained_upper=_retained_laminar_index(
+                    previous, ibl_mesh["s_upper"], "separation_s_upper", "transition_s_upper"
+                ),
+                retained_lower=_retained_laminar_index(
+                    previous, ibl_mesh["s_lower"], "separation_s_lower", "transition_s_lower"
+                ),
             )
             # Under-relax the wall blowing so a separating station cannot
             # overturn the panel solution on the next iteration.

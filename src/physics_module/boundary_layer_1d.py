@@ -25,6 +25,14 @@ from .physics_skeleton import (
 
 _H_FLOOR = 1.15
 _H1_FLOOR = 3.05
+_LAMINAR_SEPARATION_LAMBDA = -0.09
+# A station that already separated stays separated until λ recovers past
+# this level. On the 160-panel cruise mesh the coupling itself only
+# rebounds from about -0.091 to about -0.089, so a strict -0.09 test
+# revokes separation, rebuilds the aft displacement thickness, and crosses
+# the threshold again. Release is still below the attached 64-panel value
+# near -0.079, so a real recovery is not held.
+_LAMINAR_RELEASE_LAMBDA = -0.08
 
 
 def _march_speed(edge_speed: np.ndarray) -> np.ndarray:
@@ -220,13 +228,22 @@ def _side_state(
     arc: np.ndarray,
     edge_speed: np.ndarray,
     nu: float,
+    retained_index: Optional[int] = None,
 ) -> dict[str, np.ndarray | float | bool]:
     edge_speed = _march_speed(edge_speed)
     theta, shape, cf, lam, _delta_star = _thwaites_side(arc, edge_speed, nu)
     s = np.asarray(arc, dtype=np.float64)
-    laminar_hits = np.flatnonzero(lam <= -0.09)
+    laminar_hits = np.flatnonzero(lam <= _LAMINAR_SEPARATION_LAMBDA)
     laminar_sep = int(laminar_hits[0]) if laminar_hits.size else -1
     transition = _transition_index(s, edge_speed, theta, nu)
+    if retained_index is not None and 0 <= int(retained_index) < int(lam.size):
+        retained = int(retained_index)
+        if float(lam[retained]) <= _LAMINAR_RELEASE_LAMBDA:
+            moved_upstream = laminar_sep >= 0 and laminar_sep < retained and (
+                transition is None or laminar_sep < transition
+            )
+            if not moved_upstream:
+                laminar_sep = retained
     turbulent = np.zeros(s.shape, dtype=bool)
     separated_at = -1
 
@@ -235,6 +252,9 @@ def _side_state(
     # Laminar separation wins only when it is strictly upstream and the
     # turbulent closure was never reached. Starting Head at the tied
     # station lets the turbulent layer carry the adverse gradient.
+    # A station retained from the previous coupling pass stays separated
+    # until λ there recovers past the release level, so a rebound of about
+    # one thousandth does not wipe and restore the aft layer.
     if laminar_sep >= 0 and (transition is None or laminar_sep < transition):
         theta = _freeze(theta, laminar_sep)
         shape = _freeze(shape, laminar_sep)
@@ -319,6 +339,8 @@ def march_ibl(
     *,
     closure: IBLClosure = "thwaites_head",
     fail_on_separation: bool = False,
+    retained_upper: Optional[int] = None,
+    retained_lower: Optional[int] = None,
 ) -> tuple[IBLSolution, np.ndarray]:
     """March both sides and return the station solution plus panel transpiration."""
 
@@ -332,8 +354,8 @@ def march_ibl(
         raise InvalidFlowConditionError("Chord must be positive for a viscous march.")
 
     nu = float(chord) / float(reynolds)
-    upper = _side_state(ibl["s_upper"], ue_upper, nu)
-    lower = _side_state(ibl["s_lower"], ue_lower, nu)
+    upper = _side_state(ibl["s_upper"], ue_upper, nu, retained_index=retained_upper)
+    lower = _side_state(ibl["s_lower"], ue_lower, nu, retained_index=retained_lower)
     separated = bool(upper["separated_mask"] or lower["separated_mask"])
     if separated and fail_on_separation:
         side = "upper" if upper["separated_mask"] else "lower"
