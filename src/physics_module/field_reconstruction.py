@@ -8,7 +8,7 @@ import numpy as np
 
 from math_module.math_skeleton import BoundaryRegion, CartesianGrid2D, PanelMetrics2D
 
-from .influence_2d import unit_source_velocity, unit_vortex_potential, unit_vortex_velocity
+from .influence_2d import panel_sheet_influence
 from .physics_skeleton import FlowField2D
 
 _BYTE_BUDGET = 64 * 1024 * 1024
@@ -60,16 +60,18 @@ def evaluate_farfield(
     for start in range(0, n_points, block):
         stop = min(start + block, n_points)
         sample = points[start:stop]
-        vortex_u, vortex_v = unit_vortex_velocity(sample, nodes, tangent, length)
-        u[start:stop] = vortex_u @ gamma + np.cos(0.0)
-        v[start:stop] = vortex_v @ gamma
-        pot, stream = unit_vortex_potential(sample, nodes, tangent, length)
+        vortex_u, vortex_v, source_u, source_v, pot, stream = panel_sheet_influence(
+            sample, nodes, tangent, length
+        )
+        induced_u = vortex_u @ gamma
+        induced_v = vortex_v @ gamma
+        if sigma is not None:
+            induced_u = induced_u + source_u @ sigma
+            induced_v = induced_v + source_v @ sigma
+        u[start:stop] = induced_u + np.cos(0.0)
+        v[start:stop] = induced_v
         phi[start:stop] = pot @ gamma
         psi[start:stop] = stream @ gamma
-        if sigma is not None:
-            source_u, source_v = unit_source_velocity(sample, nodes, tangent, length)
-            u[start:stop] = u[start:stop] + source_u @ sigma
-            v[start:stop] = v[start:stop] + source_v @ sigma
 
     # Freestream is added in the physical frame. The kernel above added
     # ``(1, 0)``; replace it with the caller-free unit x-flow only when the
@@ -114,16 +116,16 @@ def evaluate_farfield_with_freestream(
     for start in range(0, n_points, block):
         stop = min(start + block, n_points)
         sample = points[start:stop]
-        vortex_u, vortex_v = unit_vortex_velocity(sample, nodes, tangent, length)
+        vortex_u, vortex_v, source_u, source_v, pot, stream = panel_sheet_influence(
+            sample, nodes, tangent, length
+        )
         induced_u = vortex_u @ gamma
         induced_v = vortex_v @ gamma
         if sigma is not None:
-            source_u, source_v = unit_source_velocity(sample, nodes, tangent, length)
             induced_u = induced_u + source_u @ sigma
             induced_v = induced_v + source_v @ sigma
         u[start:stop] = induced_u + freestream[0]
         v[start:stop] = induced_v + freestream[1]
-        pot, stream = unit_vortex_potential(sample, nodes, tangent, length)
         # Uniform-flow potential and streamfunction, plus the vortex sheet.
         x = sample[:, 0]
         y = sample[:, 1]

@@ -7,7 +7,7 @@ import numpy as np
 from math_module.math_skeleton import MeshOutput
 from math_module.panel_2d import build_panel_metrics_2d
 
-from .boundary_layer_1d import march_ibl
+from .boundary_layer_1d import laminar_drag_is_unsupported, march_ibl
 from .field_reconstruction import evaluate_farfield_with_freestream
 from .forces_and_moments import integrate_loads
 from .physics_skeleton import (
@@ -344,6 +344,12 @@ class PhysicsEngine:
             raise PhysicsEngineError("2D solve did not produce an inviscid solution.")
         if ibl is not None and ibl["separated"]:
             warnings.extend(_separation_warnings(ibl))
+        if laminar_drag_is_unsupported(ibl):
+            warnings.append(
+                "Laminar separation is not a complete separated-flow model: "
+                "skin friction downstream is omitted and wake drag is not included, "
+                "so CD and L/D are not a validated drag result."
+            )
         if regime == "viscous_inviscid" and not converged:
             warnings.append(
                 f"Viscous-inviscid iteration stopped at vic_iterations={iterations} "

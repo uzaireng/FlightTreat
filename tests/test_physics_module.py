@@ -534,6 +534,15 @@ def test_laminar_separation_before_transition_still_freezes() -> None:
     _assert(float(np.max(np.abs(cf[downstream]))) == 0.0, "laminar separation did not freeze skin friction")
     _assert(np.all(np.isfinite(cf)), "separated skin friction must stay finite")
     _assert(any("separated" in note.lower() for note in solved["warnings"]), "separation needs a warning")
+    _assert(
+        any("not a validated drag result" in note.lower() for note in solved["warnings"]),
+        "laminar freeze must not be reported as a complete drag solution",
+    )
+    report = AeroEngine().analyze_from_solution(mesh, solved)
+    _assert(
+        not np.isfinite(report["l_over_d"]),
+        "L/D stayed finite after laminar separation omitted the downstream friction",
+    )
 
 
 def test_trailing_edge_cluster_does_not_force_separation() -> None:
@@ -691,14 +700,13 @@ def test_marginal_rebound_does_not_revoke_laminar_separation() -> None:
 
 
 def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
-    """160-panel NACA 0012 at 4 deg must stop flipping separation.
+    """160-panel NACA 0012 at 4 deg must not wipe aft skin friction.
 
-    The station just upstream of transition was crossing λ = -0.09 every
-    iteration, and each flip replaced the aft displacement thickness. The
-    residual then stayed near 2e-2 through iteration 8 and grew when the
-    loop was continued. Retention holds that station until λ recovers.
-    The 64-panel mesh never crosses the threshold, so its upper surface
-    stays attached and the march still converges inside the same cap.
+    A graze on the single station before transition is the same two-station
+    tie a coarser mesh lands on the transition index. Both meshes stay
+    attached, converge inside the iteration cap, and keep the same friction
+    drag to within 25 percent. A deep adjacent hit, such as 10 deg, still
+    freezes.
     """
 
     fine = _mesh(
@@ -718,12 +726,11 @@ def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
     _assert(solved["converged"], f"fine cruise coupling did not converge, residual={solved['residual']:.3e}")
     _assert(solved["residual"] < 1.0e-4, f"fine cruise residual {solved['residual']:.3e}")
     _assert(int(solved["vic_iterations"]) <= 8, f"fine cruise used {solved['vic_iterations']} iterations")
-    _assert(np.isfinite(float(ibl["separation_s_upper"])), "upper laminar separation was not retained")
     _assert(
-        float(ibl["separation_s_upper"]) < float(ibl["transition_s_upper"]),
-        "retained upper separation is not upstream of transition",
+        not np.isfinite(float(ibl["separation_s_upper"])),
+        f"160-panel upper surface froze at {ibl['separation_s_upper']}",
     )
-    _assert(float(ibl["separation_s_upper"]) < 0.5, "upper separation moved to the trailing edge")
+    _assert(float(solved["loads"]["cd_friction"]) > 0.004, "fine-mesh friction was wiped")
 
     coarse = _mesh(
         {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 80},
@@ -737,6 +744,12 @@ def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
     _assert(
         not np.isfinite(float(coarse_ibl["separation_s_upper"])),
         f"64-panel upper surface separated at {coarse_ibl['separation_s_upper']}",
+    )
+    fine_friction = float(solved["loads"]["cd_friction"])
+    coarse_friction = float(coarse_solved["loads"]["cd_friction"])
+    _assert(
+        abs(fine_friction - coarse_friction) / coarse_friction < 0.25,
+        f"friction drag jumped from {coarse_friction:.5f} at 64 panels to {fine_friction:.5f} at 160",
     )
 
 

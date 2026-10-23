@@ -39,27 +39,33 @@ def _solid_angle(targets: np.ndarray, tris: np.ndarray) -> np.ndarray:
     return 2.0 * np.arctan2(triple, denom)
 
 
-def _source_potential(targets: np.ndarray, tris: np.ndarray, areas: np.ndarray) -> np.ndarray:
-    """Unit-source potential ``-1/(4π) ∫ dS/r`` for every triangle.
+def _panel_influence(targets: np.ndarray, tris: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Solid angle and source potential from one pass over the same edges.
 
-    The integral is the exact edge formula. A 7-point rule is fine far from
-    a panel and badly wrong beside a short edge, and that error is amplified
-    by the weakly constrained trailing-edge jump. ``areas`` selects the disk
-    self term applied by the caller; the in-plane self value is singular for
-    this formula at a vanishing offset. Shape ``(B, F)``.
+    The formulas match ``_solid_angle`` and the previous source integral.
+    Building them together avoids a second all-pairs solid angle.
     """
 
-    del areas  # self term is replaced after this returns
+    r1 = tris[None, :, 0, :] - targets[:, None, :]
+    r2 = tris[None, :, 1, :] - targets[:, None, :]
+    r3 = tris[None, :, 2, :] - targets[:, None, :]
+    n1 = np.linalg.norm(r1, axis=-1)
+    n2 = np.linalg.norm(r2, axis=-1)
+    n3 = np.linalg.norm(r3, axis=-1)
+    triple = np.einsum("bfi,bfi->bf", r1, np.cross(r2, r3))
+    denom = (
+        n1 * n2 * n3
+        + n3 * np.einsum("bfi,bfi->bf", r1, r2)
+        + n2 * np.einsum("bfi,bfi->bf", r1, r3)
+        + n1 * np.einsum("bfi,bfi->bf", r2, r3)
+    )
+    omega = 2.0 * np.arctan2(triple, denom)
     vertex_a = tris[:, 0, :]
     vertex_b = tris[:, 1, :]
     vertex_c = tris[:, 2, :]
     normal = np.cross(vertex_b - vertex_a, vertex_c - vertex_a)
     nhat = normal / np.maximum(np.linalg.norm(normal, axis=1)[:, None], 1e-30)
-    r1 = vertex_a[None, :, :] - targets[:, None, :]
-    r2 = vertex_b[None, :, :] - targets[:, None, :]
-    r3 = vertex_c[None, :, :] - targets[:, None, :]
     height = np.einsum("bfi,fi->bf", r1, nhat)
-    omega = _solid_angle(targets, tris)
 
     def edge_term(start: np.ndarray, stop: np.ndarray) -> np.ndarray:
         edge = stop - start
@@ -70,13 +76,26 @@ def _source_potential(targets: np.ndarray, tris: np.ndarray, areas: np.ndarray) 
         radius_start = np.linalg.norm(start, axis=-1)
         radius_stop = np.linalg.norm(stop, axis=-1)
         numer = radius_start + radius_stop + length
-        denom = np.maximum(radius_start + radius_stop - length, 1e-30)
-        return distance * np.log(numer / denom)
+        denom_edge = np.maximum(radius_start + radius_stop - length, 1e-30)
+        return distance * np.log(numer / denom_edge)
 
     edges = edge_term(r1, r2) + edge_term(r2, r3) + edge_term(r3, r1)
     # ∫ dS/r = -Σ d_i ln((R+R+L)/(R+R-L)) - h Ω.
     integral = -edges - height * omega
-    return -integral / _FOUR_PI
+    return omega, -integral / _FOUR_PI
+
+
+def _source_potential(targets: np.ndarray, tris: np.ndarray, areas: np.ndarray) -> np.ndarray:
+    """Unit-source potential ``-1/(4π) ∫ dS/r`` for every triangle.
+
+    The integral is the exact edge formula. ``areas`` selects the disk self
+    term applied by the caller; the in-plane self value is singular here.
+    Shape ``(B, F)``.
+    """
+
+    del areas
+    _omega, source = _panel_influence(targets, tris)
+    return source
 
 
 def _source_self(areas: np.ndarray) -> np.ndarray:
@@ -99,13 +118,14 @@ def _batched(targets: np.ndarray, tris: np.ndarray, areas: np.ndarray, batch: in
 
     for start in range(0, targets.shape[0], batch):
         block = targets[start : start + batch]
-        yield start, _solid_angle(block, tris), _source_potential(block, tris, areas)
+        yield start, *_panel_influence(block, tris)
 
 
 def _row_batch(n_panels: int) -> int:
-    # Three vertex vectors of shape (B, F, 3) should stay near 32 MB.
+    # Three vertex vectors of shape (B, F, 3) should stay near 128 MB.
+    # Larger blocks cut Python launch cost. The integrals are unchanged.
     bytes_per_row = max(n_panels, 1) * 3 * 8 * 6
-    return max(8, min(128, int(32 * 1024 * 1024 / bytes_per_row)))
+    return max(8, min(512, int(128 * 1024 * 1024 / bytes_per_row)))
 
 
 def _trailing_panels(panel: PanelMetrics3D) -> tuple[np.ndarray, np.ndarray]:
@@ -341,23 +361,17 @@ def solve_3d(
     inside = centroids - 1e-4 * np.sqrt(areas)[:, None] * normals
 
     source_rhs = np.zeros(count, dtype=np.float64)
-    all_tris = tris
-    all_areas = areas
     all_sigma = sigma
-    if wake.shape[0]:
-        # Wake carries doublet only; source stays on the body.
-        pass
-    for start, _omega, source_phi in _batched(inside, all_tris, all_areas, batch):
+    matrix = np.zeros((count, count), dtype=np.float64)
+    # One pass fills both the source right-hand side and the doublet matrix.
+    # Wake carries doublet only, so it is added after this body pass.
+    for start, omega, source_phi in _batched(inside, tris, areas, batch):
         stop = start + source_phi.shape[0]
-        _replace_source_diagonal(source_phi, start, all_areas)
+        _replace_source_diagonal(source_phi, start, areas)
         # Interior Dirichlet: φ_μ + φ_σ + V∞·r = 0 at the interior point.
         # Omitting the onset leaves a right-hand side of panel scale, and the
         # trailing-edge jump then collapses as the chordwise mesh is refined.
         source_rhs[start:stop] = -(source_phi @ all_sigma) - inside[start:stop] @ freestream
-
-    matrix = np.zeros((count, count), dtype=np.float64)
-    for start, omega, _source in _batched(inside, tris, areas, batch):
-        stop = start + omega.shape[0]
         matrix[start:stop] = omega / _FOUR_PI
     # Body self solid-angle is 1/2 on the interior. Set it before the wake
     # is added: a later overwrite would delete the wake influence on the
@@ -368,23 +382,26 @@ def solve_3d(
         order = np.argsort(centroids[upper_idx, 1])
         ordered_u = upper_idx[order]
         ordered_l = lower_idx[order]
-        wake_areas = 0.5 * np.linalg.norm(np.cross(wake[:, 1] - wake[:, 0], wake[:, 2] - wake[:, 0]), axis=1)
         station_count = int(ordered_u.size - 1)
-        for start, omega, _source in _batched(inside, wake, wake_areas, batch):
-            block = omega / _FOUR_PI
-            # _wake_triangles concatenates every strip's first triangle,
-            # then every strip's second. Both belong to that strip.
-            jump_index = np.concatenate(
-                (np.arange(station_count, dtype=np.int64), np.arange(station_count, dtype=np.int64))
-            )
-            if jump_index.shape[0] != wake.shape[0] or station_count < 1:
-                break
+        # _wake_triangles concatenates every strip's first triangle,
+        # then every strip's second. Both belong to that strip.
+        jump_index = np.concatenate(
+            (np.arange(station_count, dtype=np.int64), np.arange(station_count, dtype=np.int64))
+        )
+        if jump_index.shape[0] == wake.shape[0] and station_count >= 1:
             selector = np.zeros((wake.shape[0], station_count), dtype=np.float64)
             selector[np.arange(wake.shape[0]), jump_index] = 1.0
-            summed = block @ selector
-            row = slice(start, start + summed.shape[0])
-            matrix[row, ordered_u[:-1]] += summed
-            matrix[row, ordered_l[:-1]] -= summed
+        else:
+            selector = None
+        if selector is not None:
+            for start in range(0, inside.shape[0], batch):
+                block_targets = inside[start : start + batch]
+                omega = _solid_angle(block_targets, wake)
+                block = omega / _FOUR_PI
+                summed = block @ selector
+                row = slice(start, start + summed.shape[0])
+                matrix[row, ordered_u[:-1]] += summed
+                matrix[row, ordered_l[:-1]] -= summed
 
     if count <= int(dense_panel_limit):
         try:

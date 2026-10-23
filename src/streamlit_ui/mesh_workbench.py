@@ -1054,6 +1054,11 @@ def _publish_mesh(
         raise GeometryEngineError("No geometry is loaded.")
     params = dict(active.base_params)
     params.update(knobs)
+    cache_key = _solve_cache_key(active, knobs, flow)
+    cached = st.session_state.setdefault("mesh_solve_cache", {}).get(cache_key)
+    if cached is not None:
+        _store_run(**cached)
+        return
     started = time.perf_counter()
     mesh = mesh_engine.from_geometry(active.geometry, params)
     seconds = time.perf_counter() - started
@@ -1094,17 +1099,45 @@ def _publish_mesh(
     meta["notes"] = notes
     if meta.get("kind") == "math_sample":
         meta["seconds"] = seconds
-    _store_run(
-        geo=active.geometry,
-        mesh=mesh,
-        meta=meta,
-        error=None,
-        expect_error=None,
-        physics=physics,
-        physics_error=physics_error,
-        aero=aero,
-        aero_error=aero_error,
-    )
+    stored = {
+        "geo": active.geometry,
+        "mesh": mesh,
+        "meta": meta,
+        "error": None,
+        "expect_error": None,
+        "physics": physics,
+        "physics_error": physics_error,
+        "aero": aero,
+        "aero_error": aero_error,
+    }
+    if physics_error is None and aero_error is None:
+        st.session_state.setdefault("mesh_solve_cache", {})[cache_key] = stored
+    _store_run(**stored)
+
+
+def _solve_cache_key(
+    active: _ActiveGeometry,
+    knobs: Dict[str, Any],
+    flow: Optional[Dict[str, Any]],
+) -> str:
+    """Identity of one workbench solve. Same inputs skip the panel solve."""
+
+    digest = hashlib.sha1()
+    digest.update(active.mode.encode())
+    digest.update(b"\0")
+    digest.update(active.scope.encode())
+    geometry = active.geometry or {}
+    for name in ("points_2d", "facets", "shape_name", "is_closed"):
+        value = geometry.get(name)
+        if isinstance(value, np.ndarray):
+            digest.update(str(value.shape).encode())
+            digest.update(value.tobytes())
+        else:
+            digest.update(repr(value).encode())
+        digest.update(b"\0")
+    digest.update(repr(sorted((str(key), repr(value)) for key, value in knobs.items())).encode())
+    digest.update(repr(None if flow is None else sorted((str(key), repr(value)) for key, value in flow.items())).encode())
+    return digest.hexdigest()
 
 
 def _resolve_pipeline(engine: GeometryEngine) -> _ActiveGeometry:

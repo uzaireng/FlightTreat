@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 
 from math_module.math_skeleton import MeshOutput
+from physics_module.boundary_layer_1d import laminar_drag_is_unsupported
 from physics_module.physics_skeleton import PhysicsOutput
 
 from .aero_skeleton import (
@@ -232,7 +233,11 @@ def reduce_operating_point(
             )
 
     l_over_d = float("nan")
-    if np.isfinite(cd) and abs(cd) >= _LD_FLOOR and np.isfinite(cl):
+    if laminar_drag_is_unsupported(physics["ibl"]):
+        # Coupling may have converged. The frozen skin friction is still not
+        # a separated-flow drag, so the glide ratio is not reported.
+        l_over_d = float("nan")
+    elif np.isfinite(cd) and abs(cd) >= _LD_FLOOR and np.isfinite(cl):
         l_over_d = float(cl / cd)
 
     cos_a = float(np.cos(alpha))

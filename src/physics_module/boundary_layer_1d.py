@@ -33,6 +33,11 @@ _LAMINAR_SEPARATION_LAMBDA = -0.09
 # the threshold again. Release is still below the attached 64-panel value
 # near -0.079, so a real recovery is not held.
 _LAMINAR_RELEASE_LAMBDA = -0.08
+# Same width as the retain band. A hit on the single station immediately
+# upstream of transition is the two-station crossing described below unless
+# λ is at least this far past -0.09. A deeper adjacent hit, and any hit
+# two or more stations upstream, still uses -0.09 unchanged.
+_ADJACENT_TIE_DEPTH = _LAMINAR_RELEASE_LAMBDA - _LAMINAR_SEPARATION_LAMBDA
 
 
 def _march_speed(edge_speed: np.ndarray) -> np.ndarray:
@@ -195,14 +200,21 @@ def _head_from(
         cf[index] = cf_i
         theta[index + 1] = theta_new
         shape[index + 1] = h_new
-        # A shape factor that crosses 2.8 only inside the trailing cluster,
-        # while the last resolved station is still attached, is the
-        # clustered edge-speed drop rather than a resolved separation.
+        # The trailing cluster is not a resolved march. Holding its state at
+        # the last resolved station keeps a vanishing panel gap from driving
+        # the displacement thickness. A deep separation upstream of the
+        # cluster still freezes through the normal threshold below.
         resolved_attached = False
         if bool(cluster[index + 1]):
             upstream = np.flatnonzero(~cluster[: index + 1])
-            incoming = float(shape[int(upstream[-1])]) if upstream.size else h_i
+            anchor = int(upstream[-1]) if upstream.size else index
+            incoming = float(shape[anchor])
             resolved_attached = incoming < 2.8 and cf_i > 0.0
+            if resolved_attached:
+                theta[index + 1] = theta[anchor]
+                shape[index + 1] = shape[anchor]
+                cf[index + 1] = cf[anchor]
+                continue
         if (h_new >= 2.8 or cf_i <= 0.0) and not resolved_attached:
             separated_at = index + 1
             theta[index + 1 :] = theta_new
@@ -236,6 +248,15 @@ def _side_state(
     laminar_hits = np.flatnonzero(lam <= _LAMINAR_SEPARATION_LAMBDA)
     laminar_sep = int(laminar_hits[0]) if laminar_hits.size else -1
     transition = _transition_index(s, edge_speed, theta, nu)
+    # One index before transition is the same two-station crossing that a
+    # coarser mesh lands on the transition index. A graze there starts Head.
+    # A deeper value still freezes, which is the 10 deg case.
+    if (
+        transition is not None
+        and laminar_sep + 1 == transition
+        and float(lam[laminar_sep]) > _LAMINAR_SEPARATION_LAMBDA - _ADJACENT_TIE_DEPTH
+    ):
+        laminar_sep = transition
     if retained_index is not None and 0 <= int(retained_index) < int(lam.size):
         retained = int(retained_index)
         if float(lam[retained]) <= _LAMINAR_RELEASE_LAMBDA:
@@ -286,6 +307,25 @@ def _side_state(
     }
 
 
+def laminar_drag_is_unsupported(ibl: Optional[object]) -> bool:
+    """True when a laminar freeze omitted downstream skin friction.
+
+    The closure sets that skin friction to zero and has no wake drag, so
+    the integrated drag is not a separated-flow result. A turbulent
+    separation at or behind transition does not take this path.
+    """
+
+    if ibl is None:
+        return False
+    payload = ibl  # type: ignore[index]
+    for side in ("upper", "lower"):
+        separation = float(payload[f"separation_s_{side}"])
+        transition = float(payload[f"transition_s_{side}"])
+        if np.isfinite(separation) and (not np.isfinite(transition) or separation < transition):
+            return True
+    return False
+
+
 def _mask_from(size: int, index: int) -> np.ndarray:
     mask = np.zeros(size, dtype=bool)
     if index >= 0:
@@ -308,7 +348,16 @@ def transpiration_on_panels(
         station_s = np.asarray(arc, dtype=np.float64)
         if station_s.size < 2:
             return xy, np.zeros(station_s.shape, dtype=np.float64)
-        return xy, np.gradient(flux, station_s)
+        # Same unresolved trailing-edge suffix as the edge-speed slope.
+        # Dividing a smooth flux change by a cosine gap of 1e-4 chord
+        # otherwise moves δ* by several percent of chord each iteration.
+        gradient = np.gradient(flux, station_s)
+        cluster = _trailing_cluster(station_s)
+        resolved = np.flatnonzero(~cluster)
+        if np.any(cluster) and resolved.size:
+            gradient = np.array(gradient, copy=True)
+            gradient[cluster] = gradient[int(resolved[-1])]
+        return xy, gradient
 
     xy_u, vn_u = side_velocity(ibl["s_upper"], ibl["xy_upper"], ue_upper, delta_star_upper)
     xy_l, vn_l = side_velocity(ibl["s_lower"], ibl["xy_lower"], ue_lower, delta_star_lower)
