@@ -33,3 +33,6 @@ Thumbs.db
 .cursor/
 .vscode/
 .idea/
+
+# Local product notes, not part of the repo
+SAAS_STATUS_REPORT.md

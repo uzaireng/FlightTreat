@@ -24,6 +24,8 @@ from physics_module import (  # noqa: E402
 )
 from physics_module.boundary_layer_1d import _march_speed, _side_state, _thwaites_side  # noqa: E402
 from physics_module.forces_and_moments import _reference_area_3d, integrate_loads  # noqa: E402
+from physics_module.influence_2d import unit_vortex_velocity  # noqa: E402
+from physics_module.solver_2d import solve_2d  # noqa: E402
 from physics_module.solver_3d import _trailing_panels  # noqa: E402
 from physics_module.physics_skeleton import validate_physics_output  # noqa: E402
 from shared.pipeline_runner import run_physics_module_sample  # noqa: E402
@@ -753,6 +755,118 @@ def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
     )
 
 
+def test_transpiration_changes_circulation() -> None:
+    """Upper-surface blowing must reduce circulation. Uniform blowing must not.
+
+    The Dirichlet data is the contour integral of the outward transpiration.
+    A closed body cannot shed a net volume flux without a wake sheet, so a
+    uniform blowing is removed and the vortex strengths stay on the
+    solid-wall solution. Swapping which side blows must move the
+    circulation in opposite directions. The coupled 0012 and 2412 lifts
+    have to fall relative to their own inviscid solutions. The size of
+    that fall is not fitted to a measured polar.
+    """
+
+    mesh = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 160},
+        {"n_panels": 80, "n_x": 16, "n_y": 12, "clustering": "cosine"},
+    )
+    panel = mesh["panel_2d"]
+    assert panel is not None
+    alpha = np.deg2rad(4.0)
+    length = np.asarray(panel["length"], dtype=np.float64)
+    count = int(length.shape[0])
+    solid, _, _ = solve_2d(panel, alpha, None, "vortex", True)
+    uniform, _, _ = solve_2d(panel, alpha, np.full(count, 0.03), "vortex", True)
+    _assert(
+        np.allclose(uniform["gamma"], solid["gamma"], rtol=0.0, atol=1e-8),
+        "uniform transpiration changed the vortex strengths",
+    )
+
+    # One smooth wavelength around the contour: outward on the upper
+    # branch (TE → LE) and inward on the lower branch. A step at the
+    # leading edge is finer than this panel spacing can enforce.
+    phase = 2.0 * np.pi * (np.arange(count, dtype=np.float64) + 0.5) / count
+    differential = 0.02 * np.sin(phase)
+    upper_blown, _, _ = solve_2d(panel, alpha, differential, "vortex", True)
+    lower_blown, _, _ = solve_2d(panel, alpha, -differential, "vortex", True)
+    circulation = lambda solution: float(np.sum(np.asarray(solution["gamma"]) * length))
+    solid_gamma = circulation(solid)
+    upper_gamma = circulation(upper_blown)
+    lower_gamma = circulation(lower_blown)
+    _assert(
+        upper_gamma < solid_gamma - 0.01,
+        f"upper blowing left circulation at {upper_gamma:.4f}; solid wall is {solid_gamma:.4f}",
+    )
+    _assert(
+        lower_gamma > solid_gamma + 0.01,
+        f"lower blowing left circulation at {lower_gamma:.4f}; solid wall is {solid_gamma:.4f}",
+    )
+    _assert(float(np.max(np.abs(upper_blown["gamma"]))) < 5.0, "transpiration spiked the vortex sheet")
+
+    compatible = differential - float(np.sum(differential * length) / np.sum(length))
+    nodes = np.asarray(panel["nodes"], dtype=np.float64)
+    tangent = np.asarray(panel["tangent"], dtype=np.float64)
+    normal = np.asarray(panel["normal"], dtype=np.float64)
+    collocation = np.asarray(panel["collocation"], dtype=np.float64)
+    vortex_u, vortex_v = unit_vortex_velocity(collocation, nodes, tangent, length)
+    vortex_u = np.array(vortex_u, copy=True)
+    vortex_v = np.array(vortex_v, copy=True)
+    vortex_u[np.diag_indices(count)] = 0.0
+    vortex_v[np.diag_indices(count)] = 0.0
+    freestream = np.array([np.cos(alpha), np.sin(alpha)], dtype=np.float64)
+    gamma = np.asarray(upper_blown["gamma"], dtype=np.float64)
+    solid_gamma_panel = np.asarray(solid["gamma"], dtype=np.float64)
+
+    def outward_speed(strength: np.ndarray) -> np.ndarray:
+        return (
+            (vortex_u @ strength) * normal[:, 0]
+            + (vortex_v @ strength) * normal[:, 1]
+            + normal @ freestream
+        )
+
+    induced = outward_speed(gamma) - outward_speed(solid_gamma_panel)
+    correlation = float(np.corrcoef(induced, compatible)[0, 1])
+    slope = float(np.dot(induced, compatible) / np.dot(compatible, compatible))
+    _assert(
+        correlation > 0.95 and 0.8 < slope < 1.2,
+        f"blowing did not become outward speed: correlation {correlation:.3f}, slope {slope:.3f}",
+    )
+
+    flow = {"alpha_deg": 4.0, "reynolds": 6.0e6, "mach": 0.0, "v_inf": 1.0, "rho": 1.225}
+    zero_flow = {"alpha_deg": 0.0, "reynolds": 6.0e6, "mach": 0.0, "v_inf": 1.0, "rho": 1.225}
+    for code in ("0012", "2412"):
+        section = _mesh(
+            {"type": "naca", "mode": "2D", "code": code, "chord": 1.0, "num_points": 160},
+            {"n_panels": 80, "n_x": 16, "n_y": 12, "clustering": "cosine"},
+        )
+        inviscid = PhysicsEngine().solve_from_mesh(section, flow, {"regime": "inviscid", "prandtl_glauert": False})
+        viscous = PhysicsEngine().solve_from_mesh(
+            section, flow, {"regime": "viscous_inviscid", "prandtl_glauert": False}
+        )
+        _assert(viscous["converged"], f"NACA {code} coupling did not converge, residual={viscous['residual']:.3e}")
+        _assert(
+            float(viscous["loads"]["cl"]) < float(inviscid["loads"]["cl"]) - 0.01,
+            (
+                f"NACA {code} viscous CL {viscous['loads']['cl']:.4f} did not fall below "
+                f"inviscid CL {inviscid['loads']['cl']:.4f}"
+            ),
+        )
+        zero = PhysicsEngine().solve_from_mesh(
+            section, zero_flow, {"regime": "viscous_inviscid", "prandtl_glauert": False}
+        )
+        zero_inviscid = PhysicsEngine().solve_from_mesh(
+            section, zero_flow, {"regime": "inviscid", "prandtl_glauert": False}
+        )
+        if code == "0012":
+            _assert(abs(float(zero["loads"]["cl"])) < 0.02, f"NACA 0012 zero-incidence CL {zero['loads']['cl']}")
+        else:
+            _assert(
+                float(zero["loads"]["cl"]) > 0.5 * float(zero_inviscid["loads"]["cl"]),
+                f"NACA {code} lost its camber lift at zero incidence: {zero['loads']['cl']}",
+            )
+
+
 def test_physics_module_samples() -> None:
     bad = run_physics_module_sample("bad_te_index")
     _assert(bad["error_type"] == "InvalidFlowConditionError", bad["error_type"] or "no error")
@@ -784,5 +898,6 @@ if __name__ == "__main__":
     test_skin_friction_drag_uses_freestream_dynamic_pressure()
     test_marginal_rebound_does_not_revoke_laminar_separation()
     test_fine_cruise_coupling_converges_without_separation_chatter()
+    test_transpiration_changes_circulation()
     test_physics_module_samples()
     print("physics tests passed")

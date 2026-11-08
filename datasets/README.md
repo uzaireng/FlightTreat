@@ -10,7 +10,7 @@ Isolated fixtures for one engine (unit tests + single-module workbench).
 |---|---|
 | `modules/geo/` | Live catalog + SVG file fixture |
 | `modules/math/` | Live catalog: clustering, open wing, closed cylinder, and guard failures |
-| `modules/physics/` | Solver fixtures (singular matrix, Kutta, Thwaites, attached NACA) |
+| `modules/physics/` | Solver fixtures (singular matrix, Kutta, Thwaites, attached NACA) and published NACA 0012 tables in `naca0012_reference/` |
 | `modules/aero/` | Placeholder |
 | `modules/ai/` | Placeholder |
 

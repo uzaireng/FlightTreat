@@ -332,12 +332,23 @@ class PhysicsEngine:
                     previous, ibl_mesh["s_lower"], "separation_s_lower", "transition_s_lower"
                 ),
             )
-            # Under-relax the wall blowing so a separating station cannot
-            # overturn the panel solution on the next iteration.
-            transpiration = 0.25 * np.asarray(wall, dtype=np.float64) + 0.75 * transpiration
+            # 0.35 of the new blowing is applied each pass. A full update
+            # limit-cycles where the transpiration clip is active. A
+            # quarter-step let the displacement residual fall while most of
+            # the blowing was still waiting. This rate reaches the fixed
+            # point inside the iteration cap on the attached cases and on
+            # the fine cruise mesh.
+            applied = np.array(transpiration, copy=True)
+            wall_now = np.asarray(wall, dtype=np.float64)
+            # δ* can settle while the under-relaxed blowing is still far
+            # from the value the boundary layer just requested. Both have
+            # to settle. The blowing gap is a velocity, so its tolerance
+            # is not the displacement tolerance.
+            blowing_gap = float(np.max(np.abs(wall_now - applied))) if wall_now.size else 0.0
+            transpiration = 0.35 * wall_now + 0.65 * applied
             residual = _delta_residual(ibl, previous, chord)
             previous = ibl
-            converged = residual < float(chosen["vic_tolerance"])
+            converged = residual < float(chosen["vic_tolerance"]) and blowing_gap < 0.008
             if converged:
                 break
         if inviscid is None:

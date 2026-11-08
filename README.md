@@ -4,7 +4,7 @@ Python pipeline for fast 2D airfoil and 3D wing/body aerodynamic analysis, built
 
 ## Integration status
 
-**Solver (locked):** viscous-inviscid coupled panel method — 3D surface panels + 2D vortex panels + 1D integral boundary layer. Target 85–95%+ \(C_L / C_p / C_D\) accuracy without volume Navier–Stokes.
+**Solver (locked):** viscous-inviscid coupled panel method — 3D surface panels + 2D vortex panels + 1D integral boundary layer. Target 85–95%+ \(C_L / C_p / C_D\) accuracy without volume Navier–Stokes. The measured NACA 0012 comparison (conditions, coefficients, and errors) is `src/physics_module/NACA0012_VALIDATION.md`.
 
 | Module | Status | Contract | Workbench |
 |---|---|---|---|

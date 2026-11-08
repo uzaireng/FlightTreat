@@ -33,11 +33,12 @@ _LAMINAR_SEPARATION_LAMBDA = -0.09
 # the threshold again. Release is still below the attached 64-panel value
 # near -0.079, so a real recovery is not held.
 _LAMINAR_RELEASE_LAMBDA = -0.08
-# Same width as the retain band. A hit on the single station immediately
-# upstream of transition is the two-station crossing described below unless
-# λ is at least this far past -0.09. A deeper adjacent hit, and any hit
-# two or more stations upstream, still uses -0.09 unchanged.
-_ADJACENT_TIE_DEPTH = _LAMINAR_RELEASE_LAMBDA - _LAMINAR_SEPARATION_LAMBDA
+# The station immediately upstream of transition is the same crossing a
+# coarser mesh puts on the transition station. One panel can jump λ by
+# about 0.02 while its neighbors stay attached, which is not a separated
+# run. A deeper adjacent value, and any hit two or more stations upstream,
+# still uses -0.09 unchanged. The 10° separation sits two stations upstream.
+_ADJACENT_TIE_DEPTH = 0.025
 
 
 def _march_speed(edge_speed: np.ndarray) -> np.ndarray:
@@ -249,8 +250,9 @@ def _side_state(
     laminar_sep = int(laminar_hits[0]) if laminar_hits.size else -1
     transition = _transition_index(s, edge_speed, theta, nu)
     # One index before transition is the same two-station crossing that a
-    # coarser mesh lands on the transition index. A graze there starts Head.
-    # A deeper value still freezes, which is the 10 deg case.
+    # coarser mesh lands on the transition index. A single-panel overshoot
+    # there starts Head. A value deeper than the tie depth still freezes,
+    # as does any hit two or more stations upstream (the 10° case).
     if (
         transition is not None
         and laminar_sep + 1 == transition
@@ -263,7 +265,14 @@ def _side_state(
             moved_upstream = laminar_sep >= 0 and laminar_sep < retained and (
                 transition is None or laminar_sep < transition
             )
-            if not moved_upstream:
+            adjacent_tie = (
+                transition is not None
+                and retained + 1 == int(transition)
+                and float(lam[retained]) > _LAMINAR_SEPARATION_LAMBDA - _ADJACENT_TIE_DEPTH
+            )
+            # A one-station graze in front of transition is transition.
+            # Retention must not turn that graze back into a laminar freeze.
+            if not moved_upstream and not adjacent_tie:
                 laminar_sep = retained
     turbulent = np.zeros(s.shape, dtype=bool)
     separated_at = -1
@@ -340,10 +349,25 @@ def transpiration_on_panels(
     delta_star_upper: np.ndarray,
     ue_lower: np.ndarray,
     delta_star_lower: np.ndarray,
+    *,
+    freeze_upper: int = -1,
+    freeze_lower: int = -1,
 ) -> np.ndarray:
-    """Scatter ``d(Ue δ*)/ds`` onto the nearest surface panels."""
+    """Scatter ``d(Ue δ*)/ds`` onto the nearest surface panels.
 
-    def side_velocity(arc: np.ndarray, xy: np.ndarray, ue: np.ndarray, delta_star: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    Downstream of a laminar or turbulent freeze, δ* is a copied value, not
+    a marched displacement thickness. Differentiating that plateau against
+    a falling edge speed invents a wall-normal velocity the closure does
+    not contain, and feeding it back separates the next inviscid pass.
+    """
+
+    def side_velocity(
+        arc: np.ndarray,
+        xy: np.ndarray,
+        ue: np.ndarray,
+        delta_star: np.ndarray,
+        freeze: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         flux = np.asarray(ue, dtype=np.float64) * np.asarray(delta_star, dtype=np.float64)
         station_s = np.asarray(arc, dtype=np.float64)
         if station_s.size < 2:
@@ -357,10 +381,17 @@ def transpiration_on_panels(
         if np.any(cluster) and resolved.size:
             gradient = np.array(gradient, copy=True)
             gradient[cluster] = gradient[int(resolved[-1])]
+        if freeze >= 0:
+            gradient = np.array(gradient, copy=True)
+            gradient[int(freeze) :] = 0.0
         return xy, gradient
 
-    xy_u, vn_u = side_velocity(ibl["s_upper"], ibl["xy_upper"], ue_upper, delta_star_upper)
-    xy_l, vn_l = side_velocity(ibl["s_lower"], ibl["xy_lower"], ue_lower, delta_star_lower)
+    xy_u, vn_u = side_velocity(
+        ibl["s_upper"], ibl["xy_upper"], ue_upper, delta_star_upper, freeze_upper
+    )
+    xy_l, vn_l = side_velocity(
+        ibl["s_lower"], ibl["xy_lower"], ue_lower, delta_star_lower, freeze_lower
+    )
     xy = np.vstack((xy_u, xy_l))
     vn = np.concatenate((vn_u, vn_l))
     collocation = np.asarray(panel["collocation"], dtype=np.float64)
@@ -373,8 +404,8 @@ def transpiration_on_panels(
     live = weight > 0.0
     out[live] = accumulated[live] / weight[live]
     # A healthy boundary layer at these Reynolds numbers blows at a few
-    # hundredths of V∞. Larger spikes are a separated-station gradient and
-    # overturn the source sheet if they are applied raw.
+    # hundredths of V∞. A larger spike is an unresolved streamwise gradient
+    # and it overturns the panel solution if it is applied raw.
     return np.clip(out, -0.05, 0.05)
 
 
@@ -444,5 +475,7 @@ def march_ibl(
         solution["delta_star_upper"],
         solution["ue_lower"],
         solution["delta_star_lower"],
+        freeze_upper=int(upper["separated_at"]),
+        freeze_lower=int(lower["separated_at"]),
     )
     return solution, wall

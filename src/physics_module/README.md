@@ -4,7 +4,7 @@ Viscous-inviscid coupled panel solver. Module 3 copies `MeshOutput` and does not
 
 **Inviscid core.** 2D constant-strength vortex panels use a Dirichlet streamfunction system plus a Kutta condition. The midpoint Neumann matrix for a constant vortex has a checkerboard null space, so it is not the linear system. On a blunt trailing face the Kutta pair is the aft-most upper and lower surface panels; on a sharp trailing edge that pair is the two panels that meet at `te_index`. 3D bodies use constant source and doublet panels with a Morino interior condition. Open wings add a wake sheet whose doublet is the trailing-edge jump. The sheet normal points to the upper side, and both triangles of a spanwise strip carry that strip's jump. The interior Dirichlet condition is φ_μ + φ_σ + V∞·r = 0, with the source integral evaluated exactly on each triangle and the panel self-source kept as the in-plane disk value. Closed-body surface speed is sampled just off the panel. On an open wing the onset is already inside μ, so the tangential perturbation is the chordwise derivative of μ + V∞·r along each spanwise strip. A one-face sample misses the trailing-edge jump, and a difference across a cosine-clustered edge does not.
 
-**Viscous core.** Thwaites laminar, Michel transition, Head turbulent, marched from the geometric leading edge on the stations Module 2 already built. A transition/separation tie starts Head. Laminar separation is only the case where Thwaites trips on an earlier station. The cosine-clustered trailing edge does not supply the slope that decides separation. Wall transpiration `d(Ue δ*)/ds` is carried by a source sheet. Putting that blowing into the vortex streamfunction excites the near-null mode and spikes the vortex strength. `drela_two_equation` and `viscous_coupling="displacement"` raise `InvalidFlowConditionError`.
+**Viscous core.** Thwaites laminar, Michel transition, Head turbulent, marched from the geometric leading edge on the stations Module 2 already built. A transition/separation tie starts Head. Laminar separation is only the case where Thwaites trips on an earlier station. The cosine-clustered trailing edge does not supply the slope that decides separation. Wall transpiration `d(Ue δ*)/ds` enters the vortex system as the contour integral of the outward speed, so the circulation can change. The length-weighted mean of that speed is removed: a closed body has no wake sheet to carry a net volume flux, and a raw velocity on the constant-streamfunction right-hand side spikes the vortex strength. The `source_vortex` sheet only corrects the normal residual of that vortex solution. `drela_two_equation` and `viscous_coupling="displacement"` raise `InvalidFlowConditionError`.
 
 ## Input / output
 
@@ -15,7 +15,7 @@ Viscous-inviscid coupled panel solver. Module 3 copies `MeshOutput` and does not
 | File | Role |
 |---|---|
 | `physics_engine.py` | Copy mesh, dispatch 2D/3D, VIC loop, validation |
-| `solver_2d.py` | Vortex Dirichlet system, source transpiration, edge speed |
+| `solver_2d.py` | Vortex Dirichlet system, transpiration integral, edge speed |
 | `influence_2d.py` | Panel-frame vortex and source kernels |
 | `solver_3d.py` | Source/doublet system, wake, exterior velocity |
 | `boundary_layer_1d.py` | Thwaites / Head march and transpiration |
@@ -36,6 +36,10 @@ out = PhysicsEngine().solve_from_mesh(
 ```
 
 Pipeline cases call the same engine through `run_pipeline_case`. `physics_overrides` merges onto `stages.physics` and does not rewrite the catalog.
+
+## Published NACA 0012 check
+
+`NACA0012_VALIDATION.md` compares this solver with Ladson lift (NASA TM 4074, Re = 6×10⁶, M = 0.15), Gregory and O'Reilly upper-surface pressure (R&M 3726, Re = 2.88×10⁶), and the untripped Abbott drag polar at Re = 6×10⁶. The test is `tests/test_naca0012_accuracy.py`. Tripped Ladson drag is not used: this closure transitions on its own.
 
 ## Edge cases
 

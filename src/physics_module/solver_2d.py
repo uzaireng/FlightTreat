@@ -116,6 +116,30 @@ def _normal_matrix(normal: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarr
     return normal[:, 0:1] * u + normal[:, 1:2] * v
 
 
+def _blowing_streamfunction(wall_normal: np.ndarray, length: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Dirichlet data for a prescribed outward transpiration.
+
+    Along the panel contour the velocity kernels satisfy ``dψ/ds = v_n``
+    when ``v_n`` is the outward normal speed. The impermeable problem is
+    the special case ``ψ = const``. A raw ``v_n`` dropped onto that
+    constant-ψ right-hand side is not a streamfunction and excites the
+    near-null mode of the constant-vortex matrix.
+
+    A closed contour has a single-valued streamfunction only when the net
+    volume flux is zero. This solver has no wake sheet to absorb
+    ``∮ v_n ds``, so the length-weighted mean is removed. The
+    differential blowing, which is what changes the circulation, is kept.
+    The returned increment is ``∫ v_n ds`` up to each collocation point.
+    """
+
+    span = float(np.sum(length))
+    mean = float(np.sum(wall_normal * length) / span)
+    compatible = np.asarray(wall_normal - mean, dtype=np.float64)
+    cumulative = np.cumsum(compatible * length)
+    increment = cumulative - 0.5 * compatible * length
+    return compatible, increment
+
+
 def _tangential_matrix(tangent: np.ndarray, u: np.ndarray, v: np.ndarray) -> np.ndarray:
     return tangent[:, 0:1] * u + tangent[:, 1:2] * v
 
@@ -212,14 +236,16 @@ def solve_2d(
             raise InvalidFlowConditionError("Transpiration velocity must be finite.")
 
     freestream = np.array([np.cos(alpha_rad), np.sin(alpha_rad)], dtype=np.float64)
-    # No-penetration is enforced with the streamfunction. The equivalent
-    # discrete Neumann matrix for constant vortices has a checkerboard null
-    # space; ψ = const is the integral of that boundary condition and is the
-    # system that recovers 2πα. Wall transpiration is a Neumann residual and
-    # is carried by the source sheet below — adding it to this RHS excites
-    # that near-null mode and spikes the vortex strength.
+    # No-penetration is a constant streamfunction. The midpoint Neumann
+    # matrix for a constant vortex has a checkerboard null space, so ψ is
+    # the boundary condition. Transpiration is the same statement with
+    # ψ(s) = ∫ v_n ds, which lets the vortex strengths, and therefore the
+    # circulation, respond to the boundary layer. A source sheet cannot
+    # do that: sources carry no circulation, and solving them after γ is
+    # frozen leaves the Kutta circulation at the solid-wall value.
     _phi, psi = unit_vortex_potential(collocation, nodes, tangent, length)
     freestream_psi = collocation[:, 1] * freestream[0] - collocation[:, 0] * freestream[1]
+    wall_compatible, blowing_psi = _blowing_streamfunction(wall_normal, length)
 
     vortex_u, vortex_v = unit_vortex_velocity(collocation, nodes, tangent, length)
     tangent_gamma = _tangential_matrix(tangent, vortex_u, vortex_v)
@@ -230,7 +256,7 @@ def solve_2d(
         matrix[:n_panels, :n_panels] = psi
         matrix[:n_panels, n_panels] = -1.0
         rhs = np.zeros(n_panels + 1, dtype=np.float64)
-        rhs[:n_panels] = -freestream_psi
+        rhs[:n_panels] = -freestream_psi + blowing_psi
         if kutta:
             te_a, te_b = _kutta_pair(work)
             matrix[n_panels, te_a] = 1.0
@@ -243,7 +269,10 @@ def solve_2d(
     gamma = packed[:n_panels]
     sigma = None
     tangential_speed = tangent_gamma @ gamma + tangent @ freestream
-    if panel_model == "source_vortex" or np.any(wall_normal != 0.0):
+    # The vortex sheet already carries the transpiration. Sources are only
+    # the source-vortex model's residual correction, aimed at the same
+    # zero-net blowing the Dirichlet problem used.
+    if panel_model == "source_vortex":
         source_u, source_v = unit_source_velocity(collocation, nodes, tangent, length)
         normal_sigma = _normal_matrix(normal, source_u, source_v)
         tangent_sigma = _tangential_matrix(tangent, source_u, source_v)
@@ -251,10 +280,9 @@ def solve_2d(
         tangent_sigma[np.diag_indices(n_panels)] = 0.0
         normal_gamma = _normal_matrix(normal, vortex_u, vortex_v)
         normal_gamma[np.diag_indices(n_panels)] = 0.0
-        # Source strengths cancel the normal velocity the vortex sheet and the
-        # freestream still leave, and they carry the viscous transpiration.
-        # The source self-term is 1/2.
-        source_rhs = -normal @ freestream + wall_normal - normal_gamma @ gamma
+        # Source self-term is 1/2. The right-hand side is the normal
+        # velocity the vortex sheet has not already matched.
+        source_rhs = -normal @ freestream + wall_compatible - normal_gamma @ gamma
         try:
             sigma, _source_condition = _solve_dense(normal_sigma, source_rhs)
         except SingularInfluenceMatrixError:
