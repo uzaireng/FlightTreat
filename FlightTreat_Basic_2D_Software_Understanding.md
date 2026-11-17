@@ -133,11 +133,11 @@ Re_\theta \ge 1.174\left(1 + \frac{22400}{Re_s}\right) Re_s^{0.46}.
 C_f = 0.246 \cdot 10^{-0.678 H} \, Re_\theta^{-0.268}.
 \]
 
-Turbulent separation is flagged when \(H \ge 2.8\) or \(C_f \le 0\). Downstream of a laminar separation the code freezes the profile and sets \(C_f = 0\). It does not add a wake drag.
+Turbulent separation is flagged when \(H \ge 2.8\) or \(C_f \le 0\). Downstream of a laminar separation the code freezes the profile and sets \(C_f = 0\). A direct wake is marched from the trailing edge and its Squire–Young defect is stored as `cd_momentum`. That defect is not added to the published drag.
 
 **Forces.** Panel pressure force is \(-\,C_p\,\mathbf{n}\,S\). Skin friction is \(C_f (U_e/V_\infty)^2\) along the local tangent. Lift and drag are the projections of those forces onto axes rotated by α, divided by chord. Kutta–Joukowski at unit speed and unit chord is the check \(C_L \approx 2\Gamma\).
 
-**What is named but not implemented.** `drela_two_equation` and viscous coupling by moving the wall (`displacement`) both raise an error. The aero notes set `stall_model` to `"none"`. There is no stall equation.
+**What is named but not the default.** `drela_two_equation` is an equilibrium two-equation turbulent march: the momentum and kinetic-energy equations with Drela's incompressible closures, and no shear-stress lag. The default march remains Thwaites / Michel / Head. Viscous coupling by moving the wall (`displacement`) still raises an error. The aero notes set `stall_model` to `"none"`. There is no stall equation.
 
 ### 6. What methods or numerical techniques does it use?
 

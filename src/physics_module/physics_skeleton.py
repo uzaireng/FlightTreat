@@ -117,6 +117,9 @@ class IBLSolution(TypedDict):
 
     theta, delta_star, H, cf, ue along upper/lower.
     transition_s: arc length of transition (nan if fully laminar/turbulent).
+    The wake arrays are the merged shear layer downstream of the trailing
+    edge. ``cd_momentum`` is the Squire–Young value at the last wake
+    station. It is not the published drag coefficient.
     """
 
     theta_upper: np.ndarray
@@ -139,6 +142,12 @@ class IBLSolution(TypedDict):
     separated_upper: np.ndarray
     separated_lower: np.ndarray
     stagnation_xy: np.ndarray
+    wake_s: np.ndarray
+    wake_theta: np.ndarray
+    wake_delta_star: np.ndarray
+    wake_shape_h: np.ndarray
+    wake_ue: np.ndarray
+    cd_momentum: float
 
 
 class SurfaceLoads(TypedDict):
@@ -369,6 +378,20 @@ def _check_ibl(ibl: IBLSolution) -> None:
         scale = np.maximum(np.abs(predicted), 1e-12)
         if np.any(np.abs(delta_star - predicted) > 1e-8 * scale):
             raise ValueError(f"delta_star_{side} must equal shape_h * theta.")
+    n_wake = int(np.asarray(ibl["wake_theta"]).shape[0])
+    for name in ("wake_s", "wake_theta", "wake_delta_star", "wake_shape_h", "wake_ue"):
+        _f64(name, ibl[name], (n_wake,))  # type: ignore[literal-required]
+    cd_momentum = float(ibl["cd_momentum"])
+    if not np.isnan(cd_momentum) and not np.isfinite(cd_momentum):
+        raise ValueError("cd_momentum must be finite or NaN.")
+    if n_wake > 0:
+        wake_theta = np.asarray(ibl["wake_theta"])
+        wake_shape = np.asarray(ibl["wake_shape_h"])
+        wake_delta = np.asarray(ibl["wake_delta_star"])
+        predicted = wake_shape * wake_theta
+        scale = np.maximum(np.abs(predicted), 1e-12)
+        if np.any(np.abs(wake_delta - predicted) > 1e-8 * scale):
+            raise ValueError("wake_delta_star must equal wake_shape_h * wake_theta.")
 
 
 def _check_loads(loads: SurfaceLoads, mode: Literal["2D", "3D"]) -> None:

@@ -1,9 +1,15 @@
 """
-1D integral boundary layer: Thwaites laminar, Michel transition, Head turbulent.
+1D integral boundary layer.
+
+The default closure is Thwaites laminar, Michel transition, and Head
+turbulent. ``drela_two_equation`` keeps that laminar march and transition
+test, and replaces the turbulent step with the equilibrium two-equation
+shear layer. Neither closure marches a wake; the wake is a separate
+continuation that starts from the trailing-edge state.
 
 Upper and lower sides march from the stagnation station Module 2 already
-built. Laminar θ is a cumulative trapezoid. The turbulent step is explicit
-and advances both sides together; its width is the mesh spacing.
+built. Laminar θ is a cumulative trapezoid. The turbulent step advances
+both sides together; its width is the mesh spacing.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from scipy.spatial import cKDTree
 
 from math_module.math_skeleton import IBLStationMesh1D, PanelMetrics2D
 
+from .drela_equilibrium import layer_state, march_interval
 from .physics_skeleton import (
     BoundaryLayerSeparationError,
     IBLClosure,
@@ -85,6 +92,25 @@ def _trailing_cluster(arc: np.ndarray) -> np.ndarray:
         return mask
     mask[int(resolved[-1]) + 1 :] = True
     return mask
+
+
+def last_resolved_index(arc: np.ndarray) -> int:
+    """Last station that is not in the unresolved trailing-edge cluster.
+
+    The cluster is where a cosine gap is too short to support a slope.
+    Callers that need a trailing-edge edge speed use this station. The
+    geometric trailing-edge sample keeps falling after the march has
+    already frozen θ and H.
+    """
+
+    stations = np.asarray(arc, dtype=np.float64)
+    if stations.size == 0:
+        return 0
+    cluster = _trailing_cluster(stations)
+    resolved = np.flatnonzero(~cluster)
+    if resolved.size == 0:
+        return int(stations.size - 1)
+    return int(resolved[-1])
 
 
 def _edge_slope(arc: np.ndarray, edge_speed: np.ndarray) -> np.ndarray:
@@ -230,6 +256,74 @@ def _head_from(
     return theta, shape, cf, separated_at
 
 
+def _drela_from(
+    arc: np.ndarray,
+    edge_speed: np.ndarray,
+    theta: np.ndarray,
+    shape: np.ndarray,
+    cf: np.ndarray,
+    start: int,
+    nu: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Equilibrium two-equation turbulent march from ``start``.
+
+    Same separation contract as Head: a shape factor that reaches 2.8, or
+    a non-positive skin friction, freezes the side. The trailing-edge
+    cluster is copied from the last resolved station and is not itself a
+    separation test. The shear-stress lag equation is not integrated; the
+    dissipation at each step is the local equilibrium value.
+    """
+
+    s = np.asarray(arc, dtype=np.float64)
+    ue = np.maximum(np.asarray(edge_speed, dtype=np.float64), 0.0)
+    cluster = _trailing_cluster(s)
+    theta = np.array(theta, dtype=np.float64, copy=True)
+    shape = np.array(shape, dtype=np.float64, copy=True)
+    cf = np.array(cf, dtype=np.float64, copy=True)
+    n = int(s.size)
+    separated_at = -1
+    for index in range(start, n - 1):
+        state = layer_state(
+            float(theta[index]),
+            float(shape[index]),
+            float(max(ue[index], 1e-8)),
+            0.0,
+            nu,
+            False,
+        )
+        if state is not None:
+            cf[index] = state["cf"]
+        if bool(cluster[index + 1]):
+            upstream = np.flatnonzero(~cluster[: index + 1])
+            anchor = int(upstream[-1]) if upstream.size else index
+            incoming = float(shape[anchor])
+            if incoming < 2.8 and float(cf[index]) > 0.0:
+                theta[index + 1] = theta[anchor]
+                shape[index + 1] = shape[anchor]
+                cf[index + 1] = cf[anchor]
+                continue
+        ds = float(s[index + 1] - s[index])
+        theta_new, shape_new, cf_new, separated = march_interval(
+            float(theta[index]),
+            float(shape[index]),
+            float(max(ue[index], 1e-8)),
+            float(max(ue[index + 1], 1e-8)),
+            ds,
+            nu,
+            wake=False,
+        )
+        theta[index + 1] = theta_new
+        shape[index + 1] = shape_new
+        cf[index + 1] = cf_new
+        if separated or shape_new >= 2.8 or cf_new <= 0.0:
+            separated_at = index + 1
+            theta[index + 1 :] = theta_new
+            shape[index + 1 :] = shape_new
+            cf[index + 1 :] = 0.0
+            break
+    return theta, shape, cf, separated_at
+
+
 def _freeze(values: np.ndarray, index: int) -> np.ndarray:
     frozen = np.array(values, dtype=np.float64, copy=True)
     if 0 <= index < frozen.size:
@@ -242,6 +336,7 @@ def _side_state(
     edge_speed: np.ndarray,
     nu: float,
     retained_index: Optional[int] = None,
+    closure: IBLClosure = "thwaites_head",
 ) -> dict[str, np.ndarray | float | bool]:
     edge_speed = _march_speed(edge_speed)
     theta, shape, cf, lam, _delta_star = _thwaites_side(arc, edge_speed, nu)
@@ -293,7 +388,8 @@ def _side_state(
         separated_at = laminar_sep
     elif transition is not None:
         turbulent[transition:] = True
-        theta, shape, cf, turbulent_sep = _head_from(s, edge_speed, theta, shape, cf, transition, nu)
+        march = _drela_from if closure == "drela_two_equation" else _head_from
+        theta, shape, cf, turbulent_sep = march(s, edge_speed, theta, shape, cf, transition, nu)
         if turbulent_sep >= 0:
             separated_at = turbulent_sep
             turbulent[turbulent_sep:] = True
@@ -424,9 +520,7 @@ def march_ibl(
 ) -> tuple[IBLSolution, np.ndarray]:
     """March both sides and return the station solution plus panel transpiration."""
 
-    if closure == "drela_two_equation":
-        raise InvalidFlowConditionError("ibl_closure 'drela_two_equation' is not implemented")
-    if closure != "thwaites_head":
+    if closure not in ("thwaites_head", "drela_two_equation"):
         raise InvalidFlowConditionError(f"Unknown ibl_closure {closure!r}.")
     if not np.isfinite(reynolds) or reynolds <= 0.0:
         raise InvalidFlowConditionError("Reynolds number must be positive for a viscous march.")
@@ -434,8 +528,12 @@ def march_ibl(
         raise InvalidFlowConditionError("Chord must be positive for a viscous march.")
 
     nu = float(chord) / float(reynolds)
-    upper = _side_state(ibl["s_upper"], ue_upper, nu, retained_index=retained_upper)
-    lower = _side_state(ibl["s_lower"], ue_lower, nu, retained_index=retained_lower)
+    upper = _side_state(
+        ibl["s_upper"], ue_upper, nu, retained_index=retained_upper, closure=closure
+    )
+    lower = _side_state(
+        ibl["s_lower"], ue_lower, nu, retained_index=retained_lower, closure=closure
+    )
     separated = bool(upper["separated_mask"] or lower["separated_mask"])
     if separated and fail_on_separation:
         side = "upper" if upper["separated_mask"] else "lower"

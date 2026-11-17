@@ -8,6 +8,7 @@ from math_module.math_skeleton import MeshOutput
 from math_module.panel_2d import build_panel_metrics_2d
 
 from .boundary_layer_1d import laminar_drag_is_unsupported, march_ibl
+from .wake_1d import march_viscous_wake
 from .field_reconstruction import evaluate_farfield_with_freestream
 from .forces_and_moments import integrate_loads
 from .physics_skeleton import (
@@ -100,8 +101,10 @@ def resolve_parameters(mesh: MeshOutput, parameters: PhysicsParameters | None) -
 
     chosen = dict(parameters or {})
     mode = mesh["mode"]
-    if chosen.get("ibl_closure", "thwaites_head") == "drela_two_equation":
-        raise InvalidFlowConditionError("ibl_closure 'drela_two_equation' is not implemented")
+    if chosen.get("ibl_closure", "thwaites_head") not in ("thwaites_head", "drela_two_equation"):
+        raise InvalidFlowConditionError(
+            f"Unknown ibl_closure {chosen.get('ibl_closure')!r}."
+        )
     if chosen.get("viscous_coupling", "transpiration") == "displacement":
         raise InvalidFlowConditionError("viscous_coupling 'displacement' is not implemented")
     if "regime" not in chosen:
@@ -369,6 +372,29 @@ class PhysicsEngine:
         field_panel = panel if influence_panel is None else influence_panel
         gamma = inviscid["gamma"]
         assert gamma is not None
+        if ibl is not None:
+            wake = march_viscous_wake(
+                ibl_mesh,
+                ibl,
+                field_panel,
+                gamma,
+                chord,
+                flow["reynolds"],
+                alpha,
+                beta=beta,
+                sigma=inviscid["sigma"],
+            )
+            ibl["wake_s"] = wake["s"]  # type: ignore[index]
+            ibl["wake_theta"] = wake["theta"]  # type: ignore[index]
+            ibl["wake_delta_star"] = wake["delta_star"]  # type: ignore[index]
+            ibl["wake_shape_h"] = wake["shape_h"]  # type: ignore[index]
+            ibl["wake_ue"] = wake["ue"]  # type: ignore[index]
+            ibl["cd_momentum"] = float(wake["cd_momentum"])  # type: ignore[index]
+            # The defect is not copied into loads["cd"]. On the attached
+            # NACA 0012 range it lies below the surface integral, and that
+            # gap grows with lift, so replacing the integral is not a
+            # general improvement. A separated wall layer is a worse
+            # initial state for this direct wake.
         field = evaluate_farfield_with_freestream(
             field_panel,
             gamma,

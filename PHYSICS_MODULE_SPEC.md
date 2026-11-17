@@ -103,7 +103,7 @@ Applied when `parameters` omits the key:
 | `vic_tolerance` | `1e-4` (max change of `δ*` divided by chord) |
 | `viscous_coupling` | `"transpiration"` |
 
-`drela_two_equation` is a legal literal and must be rejected with `InvalidFlowConditionError("ibl_closure 'drela_two_equation' is not implemented")` until a later spec revision. Do not silently fall back.
+`drela_two_equation` is a legal literal. It keeps the Thwaites laminar march and the Michel transition test, and replaces the Head turbulent step with the incompressible equilibrium two-equation shear layer in `drela_equilibrium.py`. It does not include the shear-stress lag equation, the envelope e^n transition model, or a simultaneous Newton coupling to the panels. The default closure remains `thwaites_head`. An unknown literal still raises `InvalidFlowConditionError`. Do not silently fall back.
 
 ### 3.3 Additive parameters (new keys, all optional)
 
@@ -126,6 +126,8 @@ These are the fields the workbench and Module 4 need that the draft skeleton doe
 | `separation_s_upper`, `separation_s_lower` | `float` | Arc length from stagnation of the first separated station. `nan` if that side stays attached. |
 | `separated_upper`, `separated_lower` | `(N_u,)`, `(N_l,)` bool | Station mask. `separated` remains the scalar OR of both sides. |
 | `stagnation_xy` | `(2,)` | Copy of `ibl_1d["stagnation_xy"]`. |
+| `wake_s`, `wake_theta`, `wake_delta_star`, `wake_shape_h`, `wake_ue` | `(N_w,)` | Merged wake downstream of the trailing edge. `wake_delta_star = wake_shape_h * wake_theta`. |
+| `cd_momentum` | `float` | Squire–Young drag at the last wake station. Not the published `cd`. `nan` if the wake was not marched. |
 
 `theta_*`, `delta_star_*`, `shape_h_*`, `cf_*`, `ue_*` stay the marched quantities. `delta_star = shape_h * theta` within `1e-8` relative tolerance.
 
@@ -368,7 +370,11 @@ Freeze `θ`, `H`, and `Cf` at the last attached station for every station downst
 v_n = d(Ue δ*) / ds
 ```
 
-along each side, then scatter back onto the nearest surface panels with a vectorized bin of station arc length against `panel_2d["arc_length"]`. `viscous_coupling == "displacement"` is accepted as a literal but the first implementation must use transpiration and reject `"displacement"` with `InvalidFlowConditionError` until the displacement-body path is specified. Do not silently alias the two.
+along each side, then scatter back onto the nearest surface panels with a vectorized bin of station arc length against `panel_2d["arc_length"]`. `viscous_coupling == "displacement"` is accepted as a literal but the implementation uses transpiration and rejects `"displacement"` with `InvalidFlowConditionError`. A displacement body was measured and was not kept. Do not silently alias the two.
+
+**Wake continuation**
+
+After the wall march, both sides and a stagnant trailing-edge gap are joined. The displacement flux `Ue δ*` is continuous, and the gap is part of that flux. The momentum defect `Ue² θ` is continuous, and the gap is not part of it because `u = 0` does not contribute to θ. The edge speed at the join is the last resolved station on each side. The wake then marches the same equilibrium two-equation system with `Cf = 0` and the dissipation doubled, on the panel-field speed along the freestream ray, for one chord. Squire–Young at the last station is `cd_momentum`. It is stored on `IBLSolution` and is not the published `cd`. The published drag remains the surface pressure integral plus skin friction.
 
 ### 5.4 Prandtl–Glauert
 

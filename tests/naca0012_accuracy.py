@@ -20,7 +20,7 @@ if str(_SRC) not in sys.path:
 from geo_module import GeometryEngine  # noqa: E402
 from math_module import MeshEngine  # noqa: E402
 from physics_module import PhysicsEngine  # noqa: E402
-from physics_module.boundary_layer_1d import laminar_drag_is_unsupported  # noqa: E402
+from physics_module.boundary_layer_1d import laminar_drag_is_unsupported, last_resolved_index  # noqa: E402
 
 REFERENCE_DIR = _ROOT / "datasets" / "modules" / "physics" / "naca0012_reference"
 REPORT_PATH = _ROOT / "src" / "physics_module" / "NACA0012_VALIDATION.md"
@@ -172,6 +172,13 @@ def _solve(mesh, alpha: float, reynolds: float, mach: float, regime: str) -> dic
         "cd": float(loads["cd"]),
         "cd_pressure": float(loads["cd_pressure"]),
         "cd_friction": float(loads["cd_friction"]),
+        "cd_momentum": float("nan") if ibl is None else float(ibl["cd_momentum"]),
+        "ue_te_upper": float("nan") if ibl is None else float(ibl["ue_upper"][-1]),
+        "ue_resolved_upper": (
+            float("nan")
+            if ibl is None or mesh["ibl_1d"] is None
+            else float(ibl["ue_upper"][last_resolved_index(mesh["ibl_1d"]["s_upper"])])
+        ),
         "converged": bool(output["converged"]),
         "iterations": int(output["vic_iterations"]),
         "residual": float(output["residual"]),
@@ -584,8 +591,44 @@ def render_report(result: dict) -> str:
         f"({_pct(six['cd_rel'])}). "
         f"Pressure drag at that station is {six['solved']['cd_pressure']:.5f} "
         f"and friction drag is {six['solved']['cd_friction']:.5f}. "
-        "Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped and wake drag is not in the closure."
+        "Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped. "
+        "The published drag is this surface sum. The wake momentum defect is a separate number and is not substituted for it."
     )
+    add("")
+    add("## Wake momentum defect")
+    add("")
+    zero_for_wake = next(row for row in result["lift_rows"] if abs(row["solved"]["alpha_deg"]) < 1e-9)
+    ue_resolved = zero_for_wake["solved"]["ue_resolved_upper"]
+    ue_te = zero_for_wake["solved"]["ue_te_upper"]
+    add(
+        "The published CD above is the surface pressure integral plus skin friction. "
+        "After that integral, the two wall layers are joined and marched one chord downstream "
+        "as a single wake with no wall shear. The edge speed at the join is the last resolved "
+        "surface station. The cosine cluster at the trailing edge is excluded. "
+        f"At 0° the upper-surface speed is {ue_resolved:.3f} at the last resolved station and "
+        f"{ue_te:.3f} at the geometric trailing edge, after θ and H have already been frozen. "
+        "Using the fallen value as the wake origin under-states the momentum defect, "
+        "because the Squire–Young power then sees an edge speed the boundary layer did not march. "
+        "`cd_momentum` is `2 θ (Ue)^((H+5)/2)` at the last wake station. "
+        "It is recorded here and is not the CD in the table above."
+    )
+    add("")
+    add("| α (deg) | CD surface | CD wake momentum | CD Abbott at the solved CL |")
+    add("|---:|---:|---:|---:|")
+    for row in result["lift_rows"]:
+        solved = row["solved"]
+        if solved["alpha_deg"] < 0.0 or not solved["drag_supported"]:
+            continue
+        add(
+            "| {alpha:.2f} | {surface} | {wake} | {ref} |".format(
+                alpha=solved["alpha_deg"],
+                surface=_fmt(solved["cd"], 5),
+                wake=_fmt(solved["cd_momentum"], 5),
+                ref=_fmt(row["cd_abbott"], 5),
+            )
+        )
+    add("")
+    add("At 0° and at 2.15° the wake defect is closer to the Abbott value than the surface sum is. At 4.11° it is still slightly closer. At 6.01° it lies further below the Abbott value than the surface sum lies above it. Replacing the surface integral would therefore improve the low-lift drag and worsen the 6° drag. The surface sum stays the published drag. The same march on a separated station is not used as a drag result.")
     add("")
     add("## What was validated, and what was not")
     add("")
@@ -618,13 +661,13 @@ def render_report(result: dict) -> str:
     add("")
     add("## Remaining limitations")
     add("")
-    add("- The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling now puts the contour integral of the outward transpiration into that same vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because there is no wake sheet to carry the net mass flux. A wake displacement sheet is the next lift correction.")
+    add("- The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling puts the contour integral of the outward transpiration into that vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because a closed contour has no wake sheet in the panel system. A displacement body and a wake source were measured separately and were not kept: they did not improve lift without spoiling drag.")
     add("- There is no stall model. Past roughly 15° the calculated CL keeps rising after the experiment breaks.")
     add(
         "- "
         + _separation_phrase(result)[:1].upper()
         + _separation_phrase(result)[1:]
-        + " is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies, and wake drag is not in the closure."
+        + " is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies. The direct wake is not a separated-flow model, and its momentum defect is not the published drag."
     )
     add("- Michel transition is not a grit trip at 5% chord. A tripped-drag comparison would mix two boundary layers.")
     add("- Gregory Cp and Abbott CD were digitised from plots. NASA marks both files as only approximate. Differences smaller than a few hundredths in Cp, or a few ten-thousandths in CD, should not be read as a measured improvement.")

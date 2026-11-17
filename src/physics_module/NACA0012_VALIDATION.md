@@ -180,7 +180,21 @@ Drag is compared only where two things are both true: the reference is the untri
 | 4.11 | 0.4831 | 0.00757 | 0.00247 | 0.00510 | 0.00679 | 0.00078 | 11.5% |
 | 6.01 | 0.7024 | 0.00887 | 0.00407 | 0.00479 | 0.00805 | 0.00082 | 10.1% |
 
-At 0° the absolute CD error against the digitised Abbott value is 0.00053 (9.0%). At 6.01° the absolute CD error is 0.00082 (10.1%). Pressure drag at that station is 0.00407 and friction drag is 0.00479. Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped and wake drag is not in the closure.
+At 0° the absolute CD error against the digitised Abbott value is 0.00053 (9.0%). At 6.01° the absolute CD error is 0.00082 (10.1%). Pressure drag at that station is 0.00407 and friction drag is 0.00479. Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped. The published drag is this surface sum. The wake momentum defect is a separate number and is not substituted for it.
+
+## Wake momentum defect
+
+The published CD above is the surface pressure integral plus skin friction. After that integral, the two wall layers are joined and marched one chord downstream as a single wake with no wall shear. The edge speed at the join is the last resolved surface station. The cosine cluster at the trailing edge is excluded. At 0° the upper-surface speed is 0.882 at the last resolved station and 0.706 at the geometric trailing edge, after θ and H have already been frozen. Using the fallen value as the wake origin under-states the momentum defect, because the Squire–Young power then sees an edge speed the boundary layer did not march. `cd_momentum` is `2 θ (Ue)^((H+5)/2)` at the last wake station. It is recorded here and is not the CD in the table above.
+
+| α (deg) | CD surface | CD wake momentum | CD Abbott at the solved CL |
+|---:|---:|---:|---:|
+| 0.00 | 0.00644 | 0.00563 | 0.00591 |
+| 0.01 | 0.00644 | 0.00563 | 0.00591 |
+| 2.15 | 0.00676 | 0.00590 | 0.00600 |
+| 4.11 | 0.00757 | 0.00618 | 0.00679 |
+| 6.01 | 0.00887 | 0.00664 | 0.00805 |
+
+At 0° and at 2.15° the wake defect is closer to the Abbott value than the surface sum is. At 4.11° it is still slightly closer. At 6.01° it lies further below the Abbott value than the surface sum lies above it. Replacing the surface integral would therefore improve the low-lift drag and worsen the 6° drag. The surface sum stays the published drag. The same march on a separated station is not used as a drag result.
 
 ## What was validated, and what was not
 
@@ -190,9 +204,9 @@ At 0° the absolute CD error against the digitised Abbott value is 0.00053 (9.0%
 
 ## Remaining limitations
 
-- The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling now puts the contour integral of the outward transpiration into that same vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because there is no wake sheet to carry the net mass flux. A wake displacement sheet is the next lift correction.
+- The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling puts the contour integral of the outward transpiration into that vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because a closed contour has no wake sheet in the panel system. A displacement body and a wake source were measured separately and were not kept: they did not improve lift without spoiling drag.
 - There is no stall model. Past roughly 15° the calculated CL keeps rising after the experiment breaks.
-- Lower-surface laminar separation is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies, and wake drag is not in the closure.
+- Lower-surface laminar separation is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies. The direct wake is not a separated-flow model, and its momentum defect is not the published drag.
 - Michel transition is not a grit trip at 5% chord. A tripped-drag comparison would mix two boundary layers.
 - Gregory Cp and Abbott CD were digitised from plots. NASA marks both files as only approximate. Differences smaller than a few hundredths in Cp, or a few ten-thousandths in CD, should not be read as a measured improvement.
 - One mesh is reported: 120 cosine panels. A finer or coarser mesh will move Cp at the leading edge and can move the separation flag. This is not a grid-converged study.

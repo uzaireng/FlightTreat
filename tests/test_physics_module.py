@@ -22,7 +22,14 @@ from physics_module import (  # noqa: E402
     InvalidFlowConditionError,
     PhysicsEngine,
 )
-from physics_module.boundary_layer_1d import _march_speed, _side_state, _thwaites_side  # noqa: E402
+from physics_module.boundary_layer_1d import (  # noqa: E402
+    _march_speed,
+    _side_state,
+    _thwaites_side,
+    last_resolved_index,
+)
+from physics_module.drela_equilibrium import march_interval, turbulent_skin_friction  # noqa: E402
+from physics_module.wake_1d import merge_trailing_edge, momentum_drag_is_usable, squire_young  # noqa: E402
 from physics_module.forces_and_moments import _reference_area_3d, integrate_loads  # noqa: E402
 from physics_module.influence_2d import unit_vortex_velocity  # noqa: E402
 from physics_module.solver_2d import solve_2d  # noqa: E402
@@ -215,20 +222,116 @@ def test_unimplemented_closures_raise() -> None:
     )
     flow, _params = _flow(0.0, "viscous_inviscid")
     try:
-        PhysicsEngine().solve_from_mesh(mesh, flow, {"ibl_closure": "drela_two_equation"})
+        PhysicsEngine().solve_from_mesh(mesh, flow, {"ibl_closure": "not_a_closure"})
     except InvalidFlowConditionError as exc:
-        _assert(
-            str(exc) == "ibl_closure 'drela_two_equation' is not implemented",
-            f"unexpected drela message: {exc}",
-        )
+        _assert("not_a_closure" in str(exc), f"unexpected closure message: {exc}")
     else:
-        raise AssertionError("drela closure must be rejected")
+        raise AssertionError("unknown closure must be rejected")
     try:
         PhysicsEngine().solve_from_mesh(mesh, flow, {"viscous_coupling": "displacement"})
     except InvalidFlowConditionError as exc:
         _assert("displacement" in str(exc), f"unexpected displacement message: {exc}")
     else:
         raise AssertionError("displacement coupling must be rejected")
+
+
+def test_equilibrium_shear_layer_and_wake_join() -> None:
+    """Drela's equilibrium closures on a zero-pressure-gradient layer, and the trailing-edge join.
+
+    The skin friction at H = 1.4 and Re_θ = 5000 is the Coles/CFT value,
+    a few thousandths. A flat-plate march must grow θ and keep H near the
+    equilibrium value. A zero-pressure-gradient wake must hold θ, because
+    there is no wall shear and no pressure force. The join keeps the
+    displacement flux and the momentum defect; a stagnant base adds to
+    δ* only.
+    """
+
+    cf = turbulent_skin_friction(1.4, 5000.0)
+    _assert(0.002 < cf < 0.004, f"equilibrium Cf {cf}")
+    _assert(
+        turbulent_skin_friction(1.4, 20000.0) < cf,
+        "skin friction did not fall as Re_θ increased",
+    )
+    nu = 1.0e-6
+    theta = 1.0e-4
+    shape = 1.4
+    separated = False
+    for _step in range(40):
+        theta, shape, cf, separated = march_interval(
+            theta, shape, 1.0, 1.0, 0.025, nu, wake=False
+        )
+        if separated:
+            break
+    _assert(not separated, f"zero-pressure-gradient wall layer separated at H={shape}")
+    _assert(theta > 5.0e-4, f"momentum thickness did not grow: {theta}")
+    _assert(1.2 < shape < 1.7, f"shape factor left the turbulent range: {shape}")
+    target = 0.036 / (1.0e6 ** 0.2)
+    _assert(0.5 * target < theta < 2.0 * target, f"θ {theta} is not near the 1/7-power value {target}")
+
+    theta_w = 0.002
+    shape_w = 1.45
+    for _step in range(20):
+        theta_w, shape_w, _cf, separated = march_interval(
+            theta_w, shape_w, 1.0, 1.0, 0.05, nu, wake=True
+        )
+        if separated:
+            break
+    _assert(not separated, "zero-pressure-gradient wake separated")
+    _assert(abs(theta_w - 0.002) / 0.002 < 0.02, f"wake θ changed to {theta_w}")
+    _assert(shape_w < 1.45, f"wake shape factor did not fall: {shape_w}")
+
+    ue, th, dst, _h = merge_trailing_edge(1.0, 0.002, 0.001, 0.8, 0.001, 0.0005, 0.0)
+    flux = 1.0 * 0.002 + 0.8 * 0.001
+    momentum = 1.0 * 0.001 + 0.64 * 0.0005
+    _assert(abs(ue * dst - flux) < 1.0e-12, "displacement flux was not kept")
+    _assert(abs(ue * ue * th - momentum) < 1.0e-12, "momentum defect was not kept")
+    _ue_g, th_g, dst_g, _h_g = merge_trailing_edge(1.0, 0.002, 0.001, 1.0, 0.001, 0.0005, 0.01)
+    _assert(abs(th_g - 0.0015) < 1.0e-12, "base height changed the momentum thickness")
+    _assert(abs(dst_g - 0.013) < 1.0e-12, "base height missing from the displacement thickness")
+    _assert(abs(squire_young(0.002, 1.0, 1.0, 1.0) - 0.004) < 1.0e-12, "Squire–Young at Ue = V∞")
+    _assert(momentum_drag_is_usable(0.006, 1.2, 0.99, False), "an attached wake defect was rejected")
+    _assert(not momentum_drag_is_usable(0.006, 2.8, 0.99, False), "a separated shape factor was accepted")
+    _assert(not momentum_drag_is_usable(0.006, 1.2, 0.99, True), "a separated wake march was accepted")
+
+
+def test_wake_starts_at_resolved_edge_and_drag_stays_on_the_surface() -> None:
+    """The cosine cluster is not the wake's edge speed, and it does not replace the force drag."""
+
+    mesh = _mesh(
+        {"type": "naca", "mode": "2D", "code": "0012", "chord": 1.0, "num_points": 160},
+        {"n_panels": 80, "n_x": 16, "n_y": 12, "clustering": "cosine", "te_cluster_factor": 1.0},
+    )
+    flow = {"alpha_deg": 0.0, "reynolds": 6.0e6, "mach": 0.0, "v_inf": 1.0, "rho": 1.225}
+    head = PhysicsEngine().solve_from_mesh(mesh, flow, {"regime": "viscous_inviscid", "prandtl_glauert": False})
+    ibl = head["ibl"]
+    assert ibl is not None
+    stations = mesh["ibl_1d"]
+    assert stations is not None
+    upper = last_resolved_index(stations["s_upper"])
+    lower = last_resolved_index(stations["s_lower"])
+    expected = 0.5 * (float(ibl["ue_upper"][upper]) + float(ibl["ue_lower"][lower]))
+    _assert(abs(float(ibl["wake_ue"][0]) - expected) < 1.0e-9, "wake did not start at the resolved edge speed")
+    _assert(
+        float(ibl["ue_upper"][-1]) < float(ibl["ue_upper"][upper]) - 0.03,
+        "the trailing-edge cluster did not drop the edge speed",
+    )
+    loads = head["loads"]
+    surface = float(loads["cd_pressure"] + loads["cd_friction"])
+    _assert(abs(float(loads["cd"]) - surface) < 1.0e-12, "published drag left the surface integral")
+    _assert(np.isfinite(float(ibl["cd_momentum"])) and float(ibl["cd_momentum"]) > 0.0, "wake defect is not finite")
+    _assert(abs(float(head["loads"]["cl"])) < 0.02, f"zero-incidence CL {head['loads']['cl']}")
+
+    drela = PhysicsEngine().solve_from_mesh(
+        mesh,
+        flow,
+        {"regime": "viscous_inviscid", "prandtl_glauert": False, "ibl_closure": "drela_two_equation"},
+    )
+    drela_ibl = drela["ibl"]
+    assert drela_ibl is not None
+    _assert(drela["converged"], f"equilibrium closure did not converge, residual={drela['residual']:.3e}")
+    _assert(abs(float(drela["loads"]["cl"])) < 0.02, f"equilibrium closure CL {drela['loads']['cl']}")
+    _assert(float(np.max(drela_ibl["theta_upper"])) > 0.0, "equilibrium march did not grow θ")
+    _assert(np.isfinite(float(drela_ibl["cd_momentum"])), "equilibrium wake defect is not finite")
 
 
 def test_mesh_arrays_are_not_mutated() -> None:
@@ -886,6 +989,8 @@ if __name__ == "__main__":
     test_cylinder_nose_pressure()
     test_separated_march_returns_payload()
     test_unimplemented_closures_raise()
+    test_equilibrium_shear_layer_and_wake_join()
+    test_wake_starts_at_resolved_edge_and_drag_stays_on_the_surface()
     test_mesh_arrays_are_not_mutated()
     test_rectangular_wing_planform_and_lift()
     test_wing_direct_and_gmres_lift_agree()
