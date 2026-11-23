@@ -349,7 +349,7 @@ Cf = 0.246 * 10^(−0.678 H) * Re_θ^(−0.268)
 
 Turbulent separation onset: `H >= 2.8` or `Cf <= 0`.
 
-Intervals shorter than a quarter of the median spacing form the trailing-edge cluster. Their edge-speed slope is held at the last resolved station, for both `λ` and the Head step. A shape factor that crosses 2.8 only inside that cluster, while the last resolved station is still below 2.8, does not open a separation decision. A crossing on a resolved station still does.
+Intervals shorter than a quarter of the median spacing form the trailing-edge cluster. The edge speed on that cluster is held at the last resolved station: the panel speed there keeps falling after the march has frozen the layer, and a displacement thickness times that fall is a wall suction the closure does not contain. Streamwise derivatives, including that last resolved slope, are formed only on the resolved stations. A central difference that reached one sample into the cluster was reading the fall. The cluster slope is that resolved value, for both `λ` and the turbulent step. A shape factor that crosses 2.8 only inside that cluster, while the last resolved station is still below 2.8, does not open a separation decision. A crossing on a resolved station still does.
 
 **Thickness estimate `δ`**
 

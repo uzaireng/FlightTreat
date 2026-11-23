@@ -312,8 +312,8 @@ def test_wake_starts_at_resolved_edge_and_drag_stays_on_the_surface() -> None:
     expected = 0.5 * (float(ibl["ue_upper"][upper]) + float(ibl["ue_lower"][lower]))
     _assert(abs(float(ibl["wake_ue"][0]) - expected) < 1.0e-9, "wake did not start at the resolved edge speed")
     _assert(
-        float(ibl["ue_upper"][-1]) < float(ibl["ue_upper"][upper]) - 0.03,
-        "the trailing-edge cluster did not drop the edge speed",
+        abs(float(ibl["ue_upper"][-1]) - float(ibl["ue_upper"][upper])) < 1.0e-12,
+        "the march kept the unresolved trailing-edge speed",
     )
     loads = head["loads"]
     surface = float(loads["cd_pressure"] + loads["cd_friction"])
@@ -655,17 +655,17 @@ def test_trailing_edge_cluster_does_not_force_separation() -> None:
 
     Median spacing is about 0.04. The last gaps are 0.006 and smaller, under
     a quarter of that median, so they are the cluster. Edge speed is uniform
-    on the resolved stations, which keeps Thwaites λ at 0, and then falls
-    from 1 to 0.5 across the cluster. That drop is large enough to push a
-    raw dUe/ds through the separation threshold by itself. It must not.
-    Michel still transitions on the flat portion at this Reynolds number.
+    on the resolved stations and then falls from 1 to 0.5. That drop would
+    separate a march that differentiates into the cluster. The march holds
+    the cluster speed and its slope, so the layer stays the zero-pressure
+    gradient. At Re = 2e6 Michel still transitions on the flat portion.
     """
 
     body = np.linspace(0.0, 0.98, 25)
     arc = np.concatenate((body, np.array([0.990, 0.996, 0.999, 1.0], dtype=np.float64)))
     speed = np.ones(arc.shape, dtype=np.float64)
     speed[-4:] = np.array([0.95, 0.80, 0.65, 0.50], dtype=np.float64)
-    state = _side_state(arc, speed, nu=1.0 / 5.0e5)
+    state = _side_state(arc, speed, nu=1.0 / 2.0e6)
     cf = np.asarray(state["cf"], dtype=np.float64)
     _assert(not bool(state["separated_mask"]), f"cluster drop separated at s={state['separation_s']}")
     _assert(np.isfinite(float(state["transition_s"])), "flat portion did not transition")

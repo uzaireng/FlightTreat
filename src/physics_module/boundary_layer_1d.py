@@ -113,18 +113,49 @@ def last_resolved_index(arc: np.ndarray) -> int:
     return int(resolved[-1])
 
 
+def _streamwise_derivative(arc: np.ndarray, values: np.ndarray) -> np.ndarray:
+    """Streamwise derivative that does not look into the unresolved trailing edge.
+
+    ``np.gradient`` at the last resolved station is a central difference, so
+    it uses the next sample. On a cosine mesh that sample sits in the
+    cluster, where the panel speed falls after θ and H have been frozen.
+    The fall is not an edge-speed gradient. The derivative is formed on the
+    resolved stations only, and the cluster is held at that last value.
+    """
+
+    stations = np.asarray(arc, dtype=np.float64)
+    samples = np.asarray(values, dtype=np.float64)
+    if stations.size < 2:
+        return np.zeros(stations.shape, dtype=np.float64)
+    cluster = _trailing_cluster(stations)
+    resolved = np.flatnonzero(~cluster)
+    if resolved.size >= 2:
+        slope = np.zeros(stations.shape, dtype=np.float64)
+        slope[resolved] = np.gradient(samples[resolved], stations[resolved])
+        slope[cluster] = slope[int(resolved[-1])]
+        return slope
+    return np.gradient(samples, stations)
+
+
+def _hold_cluster_edge(arc: np.ndarray, edge_speed: np.ndarray) -> np.ndarray:
+    """Keep the unresolved trailing-edge speed at the last resolved value.
+
+    The panel solution keeps dropping there. A frozen displacement thickness
+    times that drop is a wall suction the boundary layer did not march.
+    """
+
+    speed = np.array(np.asarray(edge_speed, dtype=np.float64), copy=True)
+    cluster = _trailing_cluster(np.asarray(arc, dtype=np.float64))
+    resolved = np.flatnonzero(~cluster)
+    if resolved.size and np.any(cluster):
+        speed[cluster] = speed[int(resolved[-1])]
+    return speed
+
+
 def _edge_slope(arc: np.ndarray, edge_speed: np.ndarray) -> np.ndarray:
     """Edge-speed slope, with the trailing-edge cluster held at the last resolved value."""
 
-    if arc.size < 2:
-        return np.zeros(arc.shape, dtype=np.float64)
-    slope = np.gradient(np.asarray(edge_speed, dtype=np.float64), arc)
-    cluster = _trailing_cluster(arc)
-    resolved = np.flatnonzero(~cluster)
-    if np.any(cluster) and resolved.size:
-        slope = np.array(slope, copy=True)
-        slope[cluster] = slope[int(resolved[-1])]
-    return slope
+    return _streamwise_derivative(arc, edge_speed)
 
 
 def _thwaites_side(
@@ -338,7 +369,7 @@ def _side_state(
     retained_index: Optional[int] = None,
     closure: IBLClosure = "thwaites_head",
 ) -> dict[str, np.ndarray | float | bool]:
-    edge_speed = _march_speed(edge_speed)
+    edge_speed = _hold_cluster_edge(arc, _march_speed(edge_speed))
     theta, shape, cf, lam, _delta_star = _thwaites_side(arc, edge_speed, nu)
     s = np.asarray(arc, dtype=np.float64)
     laminar_hits = np.flatnonzero(lam <= _LAMINAR_SEPARATION_LAMBDA)
@@ -471,12 +502,7 @@ def transpiration_on_panels(
         # Same unresolved trailing-edge suffix as the edge-speed slope.
         # Dividing a smooth flux change by a cosine gap of 1e-4 chord
         # otherwise moves δ* by several percent of chord each iteration.
-        gradient = np.gradient(flux, station_s)
-        cluster = _trailing_cluster(station_s)
-        resolved = np.flatnonzero(~cluster)
-        if np.any(cluster) and resolved.size:
-            gradient = np.array(gradient, copy=True)
-            gradient[cluster] = gradient[int(resolved[-1])]
+        gradient = _streamwise_derivative(station_s, flux)
         if freeze >= 0:
             gradient = np.array(gradient, copy=True)
             gradient[int(freeze) :] = 0.0

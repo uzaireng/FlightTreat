@@ -599,16 +599,13 @@ def render_report(result: dict) -> str:
     add("")
     zero_for_wake = next(row for row in result["lift_rows"] if abs(row["solved"]["alpha_deg"]) < 1e-9)
     ue_resolved = zero_for_wake["solved"]["ue_resolved_upper"]
-    ue_te = zero_for_wake["solved"]["ue_te_upper"]
     add(
         "The published CD above is the surface pressure integral plus skin friction. "
         "After that integral, the two wall layers are joined and marched one chord downstream "
-        "as a single wake with no wall shear. The edge speed at the join is the last resolved "
-        "surface station. The cosine cluster at the trailing edge is excluded. "
-        f"At 0° the upper-surface speed is {ue_resolved:.3f} at the last resolved station and "
-        f"{ue_te:.3f} at the geometric trailing edge, after θ and H have already been frozen. "
-        "Using the fallen value as the wake origin under-states the momentum defect, "
-        "because the Squire–Young power then sees an edge speed the boundary layer did not march. "
+        "as a single wake with no wall shear. The march holds the unresolved trailing-edge "
+        "speed at the last resolved station, and streamwise derivatives are formed only on "
+        "the resolved stations. "
+        f"At 0° those two upper-surface speeds are both {ue_resolved:.3f}. "
         "`cd_momentum` is `2 θ (Ue)^((H+5)/2)` at the last wake station. "
         "It is recorded here and is not the CD in the table above."
     )
@@ -628,7 +625,7 @@ def render_report(result: dict) -> str:
             )
         )
     add("")
-    add("At 0° and at 2.15° the wake defect is closer to the Abbott value than the surface sum is. At 4.11° it is still slightly closer. At 6.01° it lies further below the Abbott value than the surface sum lies above it. Replacing the surface integral would therefore improve the low-lift drag and worsen the 6° drag. The surface sum stays the published drag. The same march on a separated station is not used as a drag result.")
+    add("On these attached stations the wake defect lies below the surface sum. It is not substituted for the published drag. The same march on a separated station is not a separated-flow drag result.")
     add("")
     add("## What was validated, and what was not")
     add("")
