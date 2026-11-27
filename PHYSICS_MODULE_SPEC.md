@@ -99,17 +99,17 @@ Applied when `parameters` omits the key:
 | `panel_model_3d` | `"constant_source_doublet"` |
 | `ibl_closure` | `"thwaites_head"` |
 | `kutta` | `True` for closed 2D sections and open 3D wing skins; `False` for closed 3D bodies |
-| `max_vic_iterations` | `8` |
+| `max_vic_iterations` | `20` |
 | `vic_tolerance` | `1e-4` (max change of `δ*` divided by chord) |
 | `viscous_coupling` | `"transpiration"` |
 
-`drela_two_equation` is a legal literal. It keeps the Thwaites laminar march and the Michel transition test, and replaces the Head turbulent step with the incompressible equilibrium two-equation shear layer in `drela_equilibrium.py`. It does not include the shear-stress lag equation, the envelope e^n transition model, or a simultaneous Newton coupling to the panels. The default closure remains `thwaites_head`. An unknown literal still raises `InvalidFlowConditionError`. Do not silently fall back.
+`drela_two_equation` and `drela_lag` are legal literals. Both keep the Thwaites laminar march and the Michel transition test, and replace the Head turbulent step with the incompressible two-equation shear layer in `drela_equilibrium.py`. `drela_two_equation` uses the local equilibrium shear stress. `drela_lag` integrates Drela and Giles' lag equation \((\delta/C_\tau)\,dC_\tau/ds = 4.2(\sqrt{C_{\tau,eq}}-\sqrt{C_\tau})\) with \(\delta = \theta(3.15 + 1.72/(H-1)) + \delta^*\). That lag closure is not an XFOIL solution: there is no \(e^n\) transition and no simultaneous Newton coupling. It is not the default. On the NACA 0012 cases used for validation it separates too early and can leave the separated-shear validity band. An unknown literal still raises `InvalidFlowConditionError`. Do not silently fall back.
 
 ### 3.3 Additive parameters (new keys, all optional)
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `fail_on_separation` | `bool` | `False` | When `False`, separation is tagged on `IBLSolution.separated` and marching freezes downstream. When `True`, the same event raises `BoundaryLayerSeparationError`. |
+| `fail_on_separation` | `bool` | `False` | When `False`, an unrecovered separation is tagged on `IBLSolution.separated` and the separated shear layer is marched. When `True`, the same event raises `BoundaryLayerSeparationError`. A bubble that reattaches is not this event. |
 | `prandtl_glauert` | `bool` | `True` | Apply the correction in §5.4 when `0 < mach < 0.7`. |
 | `wake_length_chords` | `float` | `20.0` | 3D wake sheet length in root-chord units. |
 | `dense_panel_limit` | `int` | `2000` | Largest `F` or `P` for a stored dense influence matrix. |
@@ -322,7 +322,7 @@ Re_θ = Ue θ / ν
 
 Laminar separation onset: `λ <= -0.09`.
 
-When that station is strictly upstream of Michel transition, the side separates laminar and Head does not start. When the two criteria first meet on the same station, the march transitions and Head starts. A tie is not laminar separation: both thresholds are crossed inside one mesh interval, and the turbulent closure is the one that can carry the adverse gradient.
+When the two criteria first meet on the same station, or on the single station upstream of transition and the overshoot is shallower than 0.025, the march transitions and the turbulent closure starts. A tie is not laminar separation. When laminar separation is strictly upstream of that tie, the free-shear bubble in the "After separation" section is marched instead of Head.
 
 **Transition — Michel**
 
@@ -362,7 +362,30 @@ turbulent:  δ = (72 / 7) θ                         (1/7-power approximation)
 
 **After separation**
 
-Freeze `θ`, `H`, and `Cf` at the last attached station for every station downstream. Set the separated mask. Set `separation_s_*`. Append a warning string. Raise `BoundaryLayerSeparationError` only when `fail_on_separation` is true.
+A resolved laminar separation strictly upstream of Michel transition is not frozen. From that station to Mayle's short-bubble transition length
+
+```text
+Re_s,tr = 700 Re_θ,s^0.7
+```
+
+the layer is a laminar free shear: Cf = 0, H held at the separated laminar value, and
+
+```text
+dθ/ds = -(H+2)(θ/Ue) dUe/ds + 0.225 ν /(Ue θ)
+```
+
+The second term is Thwaites' zero-pressure growth. At transition, an attached turbulent restart begins at H = 2.75 when the laminar value is higher. If that restart separates on its first resolved step, it is discarded and the turbulent separated shear layer below is used instead. `bubble_s_*` records the onset. `reattachment_s_*` records a restart that stayed attached.
+
+A turbulent station with H ≥ 2.8 or Cf ≤ 0, on a resolved station, starts that separated shear layer from the last attached state. Head's entrainment is held at F(H1) evaluated at H = 2.8, the top of the attached correlation:
+
+```text
+dθ/ds = -(H+2)(θ/Ue) dUe/ds
+d(Ue δ*)/ds = F(H=2.8) Ue
+```
+
+Cf stays 0. Reversed-flow wall shear is not resolved. H = δ*/θ. A step that would leave 1.05 ≤ H ≤ 8 is subdivided, down to 1/256 of the panel, and then rejected. Rejection holds the last finite state, sets `model_limited`, and the transpiration gradient downstream of that hold is zero because the plateau is not a marched flux. The trailing-edge cluster is still copied from the last resolved station and is not a separation test.
+
+`separation_s_*` is only an unrecovered separation. `separated` is true when either side has one. Raise `BoundaryLayerSeparationError` only when `fail_on_separation` is true and that unrecovered separation exists.
 
 **Transpiration**
 

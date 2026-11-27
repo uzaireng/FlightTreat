@@ -101,7 +101,11 @@ def resolve_parameters(mesh: MeshOutput, parameters: PhysicsParameters | None) -
 
     chosen = dict(parameters or {})
     mode = mesh["mode"]
-    if chosen.get("ibl_closure", "thwaites_head") not in ("thwaites_head", "drela_two_equation"):
+    if chosen.get("ibl_closure", "thwaites_head") not in (
+        "thwaites_head",
+        "drela_two_equation",
+        "drela_lag",
+    ):
         raise InvalidFlowConditionError(
             f"Unknown ibl_closure {chosen.get('ibl_closure')!r}."
         )
@@ -124,7 +128,11 @@ def resolve_parameters(mesh: MeshOutput, parameters: PhysicsParameters | None) -
         else:
             panel3 = mesh["panel_3d"]
             chosen["kutta"] = False if panel3 is None else not bool(panel3["is_closed"])
-    chosen.setdefault("max_vic_iterations", 8)
+    # A reattaching laminar bubble keeps moving the displacement thickness
+    # for several under-relaxed passes after the onset station has settled.
+    # Eight passes stop that transient early. Twenty is enough for the
+    # 160-panel cruise bubble to finish; attached cases still stop sooner.
+    chosen.setdefault("max_vic_iterations", 20)
     chosen.setdefault("vic_tolerance", 1e-4)
     chosen.setdefault("viscous_coupling", "transpiration")
     chosen.setdefault("fail_on_separation", False)
@@ -146,14 +154,22 @@ def _beta(mach: float, enabled: bool) -> float:
 
 def _separation_warnings(ibl: IBLSolution) -> list[str]:
     notes: list[str] = []
-    if np.isfinite(ibl["separation_s_upper"]):
-        notes.append(
-            f"Boundary layer separated on the upper surface at s={ibl['separation_s_upper']:.6g}."
-        )
-    if np.isfinite(ibl["separation_s_lower"]):
-        notes.append(
-            f"Boundary layer separated on the lower surface at s={ibl['separation_s_lower']:.6g}."
-        )
+    for side in ("upper", "lower"):
+        bubble = float(ibl[f"bubble_s_{side}"])  # type: ignore[literal-required]
+        reattached = float(ibl[f"reattachment_s_{side}"])  # type: ignore[literal-required]
+        separation = float(ibl[f"separation_s_{side}"])  # type: ignore[literal-required]
+        if np.isfinite(bubble) and np.isfinite(reattached):
+            notes.append(
+                f"Laminar separation on the {side} surface at s={bubble:.6g} "
+                f"transitioned in the free shear layer and reattached at s={reattached:.6g}."
+            )
+        if np.isfinite(separation):
+            notes.append(
+                f"Boundary layer separated on the {side} surface at s={separation:.6g}. "
+                "Downstream of that station the layer is a separated shear layer: "
+                "wall shear is zero, and displacement thickness keeps marching. "
+                "This is not a validated stall-drag model."
+            )
     return notes
 
 
@@ -166,7 +182,7 @@ def _retained_laminar_index(
     """Station index of a laminar separation retained from the previous pass.
 
     Turbulent separation is not retained. A separation at or downstream of
-    transition was not the laminar-freeze branch.
+    transition was not the laminar-bubble branch.
     """
 
     if previous is None:
@@ -356,13 +372,20 @@ class PhysicsEngine:
                 break
         if inviscid is None:
             raise PhysicsEngineError("2D solve did not produce an inviscid solution.")
-        if ibl is not None and ibl["separated"]:
+        if ibl is not None:
             warnings.extend(_separation_warnings(ibl))
+        if ibl is not None and bool(ibl["model_limited"]):
+            warnings.append(
+                "Separated shear-layer model left its validity range "
+                "(shape factor outside 1.05 to 8, or a non-finite step). "
+                "The last finite state was held. That hold is not a prediction "
+                "that the layer stopped growing."
+            )
         if laminar_drag_is_unsupported(ibl):
             warnings.append(
-                "Laminar separation is not a complete separated-flow model: "
-                "skin friction downstream is omitted and wake drag is not included, "
-                "so CD and L/D are not a validated drag result."
+                "Laminar separation did not reach free-shear transition: "
+                "wall shear downstream is zero and the separated drag is not "
+                "a validated result, so CD and L/D are not reported as one."
             )
         if regime == "viscous_inviscid" and not converged:
             warnings.append(

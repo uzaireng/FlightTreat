@@ -4,8 +4,17 @@
 The default closure is Thwaites laminar, Michel transition, and Head
 turbulent. ``drela_two_equation`` keeps that laminar march and transition
 test, and replaces the turbulent step with the equilibrium two-equation
-shear layer. Neither closure marches a wake; the wake is a separate
-continuation that starts from the trailing-edge state.
+shear layer. ``drela_lag`` uses the same two equations and integrates
+Drela and Giles' shear-stress lag; it is not an XFOIL solution.
+
+A resolved laminar separation upstream of Michel transition is a free
+shear layer, not a frozen profile. Transition there follows Mayle's
+short-bubble length, then an attached turbulent restart is attempted.
+If that restart fails, or a turbulent station reaches H = 2.8 or
+Cf ≤ 0, a separated shear layer is marched and its displacement
+thickness still feeds transpiration. The trailing-edge cluster is
+still not a separation test. Neither closure marches a wake; the wake
+is a separate continuation that starts from the trailing-edge state.
 
 Upper and lower sides march from the stagnation station Module 2 already
 built. Laminar θ is a cumulative trapezoid. The turbulent step advances
@@ -23,6 +32,14 @@ from scipy.spatial import cKDTree
 from math_module.math_skeleton import IBLStationMesh1D, PanelMetrics2D
 
 from .drela_equilibrium import layer_state, march_interval
+from .separated_shear import (
+    REATTACHMENT_SHAPE,
+    laminar_shear_step,
+    mayle_transition_distance,
+    separated_entrainment,
+    separated_shear_step,
+    shape_in_range,
+)
 from .physics_skeleton import (
     BoundaryLayerSeparationError,
     IBLClosure,
@@ -224,11 +241,12 @@ def _head_from(
     cf: np.ndarray,
     start: int,
     nu: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
     """Explicit Head march from ``start`` toward the trailing edge.
 
-    Returns updated ``theta``, ``shape``, ``cf`` and the first separated
-    station index, or ``-1`` when the side stays attached.
+    Returns updated ``theta``, ``shape``, ``cf``, the first unrecovered
+    separation index (or ``-1``), and the first station held because the
+    separated shear layer left its validity band (or ``-1``).
     """
 
     s = np.asarray(arc, dtype=np.float64)
@@ -261,7 +279,7 @@ def _head_from(
         # The trailing cluster is not a resolved march. Holding its state at
         # the last resolved station keeps a vanishing panel gap from driving
         # the displacement thickness. A deep separation upstream of the
-        # cluster still freezes through the normal threshold below.
+        # cluster still leaves the attached closure through the test below.
         resolved_attached = False
         if bool(cluster[index + 1]):
             upstream = np.flatnonzero(~cluster[: index + 1])
@@ -274,17 +292,18 @@ def _head_from(
                 cf[index + 1] = cf[anchor]
                 continue
         if (h_new >= 2.8 or cf_i <= 0.0) and not resolved_attached:
-            separated_at = index + 1
-            theta[index + 1 :] = theta_new
-            shape[index + 1 :] = h_new
-            cf[index + 1 :] = min(cf_i, 0.0) if cf_i <= 0.0 else cf_i
-            cf[index + 1 :] = 0.0
-            break
+            # The attached step that crossed the threshold is not accepted.
+            # A separated shear layer starts from the last attached state.
+            onset = index + 1
+            theta[onset] = theta[index]
+            shape[onset] = shape[index]
+            hold_at = _apply_separated(s, ue, theta, shape, cf, onset, cluster)
+            return theta, shape, cf, onset, hold_at
     if n > start:
         h_last = float(np.clip(shape[-1], _H_FLOOR, 4.0))
         re_last = max(float(ue[-1]) * float(theta[-1]) / nu, 1e-8)
         cf[-1] = float(np.clip(0.246 * 10.0 ** (-0.678 * h_last) * re_last ** (-0.268), 0.0, 0.04))
-    return theta, shape, cf, separated_at
+    return theta, shape, cf, separated_at, -1
 
 
 def _drela_from(
@@ -295,14 +314,20 @@ def _drela_from(
     cf: np.ndarray,
     start: int,
     nu: float,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Equilibrium two-equation turbulent march from ``start``.
+    *,
+    lag: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    """Two-equation turbulent march from ``start``.
 
-    Same separation contract as Head: a shape factor that reaches 2.8, or
-    a non-positive skin friction, freezes the side. The trailing-edge
-    cluster is copied from the last resolved station and is not itself a
-    separation test. The shear-stress lag equation is not integrated; the
-    dissipation at each step is the local equilibrium value.
+    ``lag=False`` is the equilibrium closure. ``lag=True`` integrates
+    Drela and Giles' shear-stress lag, seeded at the equilibrium value
+    of the first turbulent station. A shape factor that reaches 2.8, or
+    a non-positive skin friction, starts the separated shear layer from
+    the last attached state. The trailing-edge cluster is copied from
+    the last resolved station and is not itself a separation test.
+
+    Returns ``theta``, ``shape``, ``cf``, the unrecovered separation
+    index or ``-1``, and the validity-hold index or ``-1``.
     """
 
     s = np.asarray(arc, dtype=np.float64)
@@ -312,8 +337,16 @@ def _drela_from(
     shape = np.array(shape, dtype=np.float64, copy=True)
     cf = np.array(cf, dtype=np.float64, copy=True)
     n = int(s.size)
-    separated_at = -1
+    c_tau: float | None = None
     for index in range(start, n - 1):
+        if lag and c_tau is None:
+            seeded = _equilibrium_c_tau(
+                float(theta[index]),
+                float(shape[index]),
+                float(max(ue[index], 1.0e-8)),
+                nu,
+            )
+            c_tau = 1.0e-8 if seeded is None else seeded
         state = layer_state(
             float(theta[index]),
             float(shape[index]),
@@ -321,6 +354,7 @@ def _drela_from(
             0.0,
             nu,
             False,
+            sqrt_shear=None if c_tau is None else float(np.sqrt(max(c_tau, 0.0))),
         )
         if state is not None:
             cf[index] = state["cf"]
@@ -334,32 +368,148 @@ def _drela_from(
                 cf[index + 1] = cf[anchor]
                 continue
         ds = float(s[index + 1] - s[index])
-        theta_new, shape_new, cf_new, separated = march_interval(
-            float(theta[index]),
-            float(shape[index]),
-            float(max(ue[index], 1e-8)),
-            float(max(ue[index + 1], 1e-8)),
-            ds,
-            nu,
-            wake=False,
-        )
+        if lag:
+            theta_new, shape_new, cf_new, separated, c_next = march_interval(
+                float(theta[index]),
+                float(shape[index]),
+                float(max(ue[index], 1e-8)),
+                float(max(ue[index + 1], 1e-8)),
+                ds,
+                nu,
+                wake=False,
+                c_tau=c_tau,
+            )
+        else:
+            theta_new, shape_new, cf_new, separated = march_interval(
+                float(theta[index]),
+                float(shape[index]),
+                float(max(ue[index], 1e-8)),
+                float(max(ue[index + 1], 1e-8)),
+                ds,
+                nu,
+                wake=False,
+            )
+            c_next = None
+        if separated or shape_new >= 2.8 or cf_new <= 0.0:
+            onset = index + 1
+            theta[onset] = theta[index]
+            shape[onset] = shape[index]
+            hold_at = _apply_separated(s, ue, theta, shape, cf, onset, cluster)
+            return theta, shape, cf, onset, hold_at
         theta[index + 1] = theta_new
         shape[index + 1] = shape_new
         cf[index + 1] = cf_new
-        if separated or shape_new >= 2.8 or cf_new <= 0.0:
-            separated_at = index + 1
-            theta[index + 1 :] = theta_new
-            shape[index + 1 :] = shape_new
-            cf[index + 1 :] = 0.0
-            break
-    return theta, shape, cf, separated_at
+        c_tau = None if c_next is None else float(c_next)
+    return theta, shape, cf, -1, -1
 
 
-def _freeze(values: np.ndarray, index: int) -> np.ndarray:
-    frozen = np.array(values, dtype=np.float64, copy=True)
-    if 0 <= index < frozen.size:
-        frozen[index:] = frozen[index]
-    return frozen
+def _equilibrium_c_tau(theta: float, shape_h: float, edge_speed: float, nu: float) -> float | None:
+    """Equilibrium Cτ at one station. ``None`` when the closure is not finite."""
+
+    state = layer_state(theta, shape_h, edge_speed, 0.0, nu, False)
+    if state is None:
+        return None
+    return float(state["equilibrium_sqrt_shear"] ** 2)
+
+
+def _apply_separated(
+    arc: np.ndarray,
+    edge_speed: np.ndarray,
+    theta: np.ndarray,
+    shape: np.ndarray,
+    cf: np.ndarray,
+    start: int,
+    cluster: np.ndarray,
+) -> int:
+    """March a separated turbulent shear layer from ``start``.
+
+    Returns the first station that was held because the step left the
+    validity band, or ``-1`` when every resolved step stayed inside it.
+    Stations in the trailing-edge cluster copy the last resolved state.
+    """
+
+    s = np.asarray(arc, dtype=np.float64)
+    ue = np.asarray(edge_speed, dtype=np.float64)
+    entrainment = separated_entrainment()
+    n = int(s.size)
+    if start < 0 or start >= n:
+        return -1
+    cf[start:] = 0.0
+    hold_at = -1
+    if float(theta[start]) <= 0.0 or not shape_in_range(float(shape[start])):
+        hold_at = start
+    for index in range(start, n - 1):
+        if bool(cluster[index + 1]) or hold_at >= 0:
+            theta[index + 1] = theta[index]
+            shape[index + 1] = shape[index]
+            cf[index + 1] = 0.0
+            continue
+        ds = float(s[index + 1] - s[index])
+        stepped = separated_shear_step(
+            float(theta[index]),
+            float(shape[index]),
+            float(max(ue[index], 1.0e-8)),
+            float(max(ue[index + 1], 1.0e-8)),
+            ds,
+            entrainment,
+        )
+        if stepped is None:
+            hold_at = index + 1
+            theta[index + 1] = theta[index]
+            shape[index + 1] = shape[index]
+            cf[index + 1] = 0.0
+            continue
+        theta[index + 1] = stepped[0]
+        shape[index + 1] = stepped[1]
+        cf[index + 1] = 0.0
+    return hold_at
+
+
+def _march_laminar_shear(
+    arc: np.ndarray,
+    edge_speed: np.ndarray,
+    theta: np.ndarray,
+    shape: np.ndarray,
+    cf: np.ndarray,
+    start: int,
+    stop: int,
+    nu: float,
+    cluster: np.ndarray,
+) -> int:
+    """Laminar free shear on ``[start, stop)``. Returns a hold index or ``-1``."""
+
+    s = np.asarray(arc, dtype=np.float64)
+    ue = np.asarray(edge_speed, dtype=np.float64)
+    n = int(s.size)
+    stop = min(int(stop), n)
+    if start < 0 or start >= stop:
+        return -1
+    cf[start:stop] = 0.0
+    hold_at = -1
+    for index in range(start, stop - 1):
+        if bool(cluster[index + 1]) or hold_at >= 0:
+            theta[index + 1] = theta[index]
+            shape[index + 1] = shape[index]
+            cf[index + 1] = 0.0
+            continue
+        stepped = laminar_shear_step(
+            float(theta[index]),
+            float(shape[index]),
+            float(max(ue[index], 1.0e-8)),
+            float(max(ue[index + 1], 1.0e-8)),
+            float(s[index + 1] - s[index]),
+            nu,
+        )
+        if stepped is None:
+            hold_at = index + 1
+            theta[index + 1] = theta[index]
+            shape[index + 1] = shape[index]
+            cf[index + 1] = 0.0
+            continue
+        theta[index + 1] = stepped[0]
+        shape[index + 1] = stepped[1]
+        cf[index + 1] = 0.0
+    return hold_at
 
 
 def _side_state(
@@ -377,7 +527,7 @@ def _side_state(
     transition = _transition_index(s, edge_speed, theta, nu)
     # One index before transition is the same two-station crossing that a
     # coarser mesh lands on the transition index. A single-panel overshoot
-    # there starts Head. A value deeper than the tie depth still freezes,
+    # there starts Head. A value deeper than the tie depth still opens the bubble,
     # as does any hit two or more stations upstream (the 10° case).
     if (
         transition is not None
@@ -397,30 +547,105 @@ def _side_state(
                 and float(lam[retained]) > _LAMINAR_SEPARATION_LAMBDA - _ADJACENT_TIE_DEPTH
             )
             # A one-station graze in front of transition is transition.
-            # Retention must not turn that graze back into a laminar freeze.
+            # Retention must not turn that graze back into a laminar bubble.
             if not moved_upstream and not adjacent_tie:
                 laminar_sep = retained
+    cluster = _trailing_cluster(s)
+    # A λ hit that exists only inside the unresolved trailing-edge cluster
+    # is the same non-separation as a turbulent crossing there.
+    if laminar_sep >= 0 and bool(cluster[laminar_sep]):
+        laminar_sep = -1
     turbulent = np.zeros(s.shape, dtype=bool)
     separated_at = -1
+    bubble_at = -1
+    reattach_at = -1
+    hold_at = -1
 
     # A tie is transition. Thwaites λ and Michel's criterion often cross
     # between the same two stations, so both first light on one index.
-    # Laminar separation wins only when it is strictly upstream and the
-    # turbulent closure was never reached. Starting Head at the tied
-    # station lets the turbulent layer carry the adverse gradient.
-    # A station retained from the previous coupling pass stays separated
-    # until λ there recovers past the release level, so a rebound of about
-    # one thousandth does not wipe and restore the aft layer.
+    # Laminar separation wins only when it is strictly upstream of Michel.
+    # That case is a free shear layer until Mayle transition, then an
+    # attached turbulent restart. It is not a frozen profile.
+    # A station retained from the previous coupling pass stays the bubble
+    # onset until λ there recovers past the release level.
     if laminar_sep >= 0 and (transition is None or laminar_sep < transition):
-        theta = _freeze(theta, laminar_sep)
-        shape = _freeze(shape, laminar_sep)
-        cf = _freeze(cf, laminar_sep)
-        cf[laminar_sep:] = 0.0
-        separated_at = laminar_sep
+        bubble_at = laminar_sep
+        distance = mayle_transition_distance(
+            float(theta[laminar_sep]),
+            float(max(edge_speed[laminar_sep], 1.0e-8)),
+            nu,
+        )
+        shear_transition: int | None = None
+        if np.isfinite(distance):
+            s_tr = float(s[laminar_sep]) + float(distance)
+            candidates = np.flatnonzero((s >= s_tr) & (~cluster))
+            candidates = candidates[candidates > laminar_sep]
+            if candidates.size:
+                shear_transition = int(candidates[0])
+        stop = int(s.size) if shear_transition is None else shear_transition
+        hold_at = _march_laminar_shear(
+            s, edge_speed, theta, shape, cf, laminar_sep, stop, nu, cluster
+        )
+        if shear_transition is None or hold_at >= 0:
+            separated_at = laminar_sep
+            transition = None
+        else:
+            transition = shear_transition
+            saved_theta = np.array(theta, copy=True)
+            saved_shape = np.array(shape, copy=True)
+            saved_cf = np.array(cf, copy=True)
+            if float(shape[transition]) > REATTACHMENT_SHAPE:
+                shape[transition] = REATTACHMENT_SHAPE
+            if closure == "thwaites_head":
+                theta, shape, cf, turbulent_sep, turb_hold = _head_from(
+                    s, edge_speed, theta, shape, cf, transition, nu
+                )
+            else:
+                theta, shape, cf, turbulent_sep, turb_hold = _drela_from(
+                    s,
+                    edge_speed,
+                    theta,
+                    shape,
+                    cf,
+                    transition,
+                    nu,
+                    lag=closure == "drela_lag",
+                )
+            immediate = turbulent_sep >= 0 and turbulent_sep <= transition + 1
+            if immediate:
+                theta = saved_theta
+                shape = saved_shape
+                cf = saved_cf
+                shear_hold = _apply_separated(s, edge_speed, theta, shape, cf, transition, cluster)
+                separated_at = transition
+                turbulent[transition:] = True
+                if shear_hold >= 0:
+                    hold_at = shear_hold
+            else:
+                reattach_at = transition
+                turbulent[transition:] = True
+                if turbulent_sep >= 0:
+                    separated_at = turbulent_sep
+                    turbulent[turbulent_sep:] = True
+                if turb_hold >= 0:
+                    hold_at = turb_hold
     elif transition is not None:
         turbulent[transition:] = True
-        march = _drela_from if closure == "drela_two_equation" else _head_from
-        theta, shape, cf, turbulent_sep = march(s, edge_speed, theta, shape, cf, transition, nu)
+        if closure == "thwaites_head":
+            theta, shape, cf, turbulent_sep, hold_at = _head_from(
+                s, edge_speed, theta, shape, cf, transition, nu
+            )
+        else:
+            theta, shape, cf, turbulent_sep, hold_at = _drela_from(
+                s,
+                edge_speed,
+                theta,
+                shape,
+                cf,
+                transition,
+                nu,
+                lag=closure == "drela_lag",
+            )
         if turbulent_sep >= 0:
             separated_at = turbulent_sep
             turbulent[turbulent_sep:] = True
@@ -438,17 +663,21 @@ def _side_state(
         "ue": np.ascontiguousarray(np.asarray(edge_speed, dtype=np.float64), dtype=np.float64),
         "transition_s": float("nan") if transition is None else float(s[transition]),
         "separation_s": float("nan") if separated_at < 0 else float(s[separated_at]),
+        "bubble_s": float("nan") if bubble_at < 0 else float(s[bubble_at]),
+        "reattachment_s": float("nan") if reattach_at < 0 else float(s[reattach_at]),
+        "hold_at": int(hold_at),
         "separated_mask": separated_at >= 0,
         "separated_at": separated_at,
     }
 
 
 def laminar_drag_is_unsupported(ibl: Optional[object]) -> bool:
-    """True when a laminar freeze omitted downstream skin friction.
+    """True when laminar separation was not followed by transition.
 
-    The closure sets that skin friction to zero and has no wake drag, so
-    the integrated drag is not a separated-flow result. A turbulent
-    separation at or behind transition does not take this path.
+    The laminar free shear layer sets wall shear to zero. That surface
+    integral is not a validated separated-flow drag, so L/D is withheld.
+    A reattached bubble has no unrecovered ``separation_s`` and is not
+    this case. A turbulent separation at or behind transition is not either.
     """
 
     if ibl is None:
@@ -482,10 +711,11 @@ def transpiration_on_panels(
 ) -> np.ndarray:
     """Scatter ``d(Ue δ*)/ds`` onto the nearest surface panels.
 
-    Downstream of a laminar or turbulent freeze, δ* is a copied value, not
-    a marched displacement thickness. Differentiating that plateau against
-    a falling edge speed invents a wall-normal velocity the closure does
-    not contain, and feeding it back separates the next inviscid pass.
+    A marched separated shear layer keeps its displacement gradient: that
+    is the coupling. ``freeze_*`` is only the station where the shear-layer
+    model left its validity band and the state was held. Differentiating
+    that plateau against a changing edge speed invents a wall-normal
+    velocity the march does not contain.
     """
 
     def side_velocity(
@@ -546,7 +776,7 @@ def march_ibl(
 ) -> tuple[IBLSolution, np.ndarray]:
     """March both sides and return the station solution plus panel transpiration."""
 
-    if closure not in ("thwaites_head", "drela_two_equation"):
+    if closure not in ("thwaites_head", "drela_two_equation", "drela_lag"):
         raise InvalidFlowConditionError(f"Unknown ibl_closure {closure!r}.")
     if not np.isfinite(reynolds) or reynolds <= 0.0:
         raise InvalidFlowConditionError("Reynolds number must be positive for a viscous march.")
@@ -584,10 +814,15 @@ def march_ibl(
         transition_s_upper=float(upper["transition_s"]),  # type: ignore[arg-type]
         transition_s_lower=float(lower["transition_s"]),  # type: ignore[arg-type]
         separated=separated,
+        model_limited=bool(int(upper["hold_at"]) >= 0 or int(lower["hold_at"]) >= 0),
         delta_upper=upper["delta"],  # type: ignore[arg-type]
         delta_lower=lower["delta"],  # type: ignore[arg-type]
         separation_s_upper=float(upper["separation_s"]),  # type: ignore[arg-type]
         separation_s_lower=float(lower["separation_s"]),  # type: ignore[arg-type]
+        bubble_s_upper=float(upper["bubble_s"]),  # type: ignore[arg-type]
+        bubble_s_lower=float(lower["bubble_s"]),  # type: ignore[arg-type]
+        reattachment_s_upper=float(upper["reattachment_s"]),  # type: ignore[arg-type]
+        reattachment_s_lower=float(lower["reattachment_s"]),  # type: ignore[arg-type]
         separated_upper=_mask_from(n_upper, int(upper["separated_at"])),  # type: ignore[arg-type]
         separated_lower=_mask_from(n_lower, int(lower["separated_at"])),  # type: ignore[arg-type]
         stagnation_xy=np.array(ibl["stagnation_xy"], dtype=np.float64, copy=True),
@@ -599,7 +834,7 @@ def march_ibl(
         solution["delta_star_upper"],
         solution["ue_lower"],
         solution["delta_star_lower"],
-        freeze_upper=int(upper["separated_at"]),
-        freeze_lower=int(lower["separated_at"]),
+        freeze_upper=int(upper["hold_at"]),
+        freeze_lower=int(lower["hold_at"]),
     )
     return solution, wall

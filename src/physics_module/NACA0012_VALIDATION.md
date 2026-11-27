@@ -38,11 +38,11 @@ The wind-tunnel models are the ordinary blunt-trailing-edge NACA 0012. NASA's ow
 | 2.15 | 0.2236 | 0.2381 | 0.0145 | 6.5% | 0.2125 to 0.2236 | yes | no |
 | 4.11 | 0.4397 | 0.4573 | 0.0176 | 4.0% | 0.4316 to 0.4397 | yes | no |
 | 6.01 | 0.6487 | 0.6739 | 0.0252 | 3.9% | 0.6487 to 0.6558 | yes | no |
-| 8.08 | 0.8701 | 0.9178 | 0.0477 | 5.5% | 0.8689 to 0.8701 | yes | yes |
-| 10.10 | 1.0775 | 1.1543 | 0.0768 | 7.1% | 1.0707 to 1.0809 | yes | yes |
-| 12.13 | 1.2720 | 1.3898 | 0.1178 | 9.3% | 1.2605 to 1.2720 | yes | yes |
-| 15.27 | 1.5280 | 1.7473 | 0.2193 | 14.4% | 1.5129 to 1.5280 | no | yes |
-| 18.18 | 1.1886 | 2.0963 | 0.9077 | 76.4% | 0.9967 to 1.1886 | no | yes |
+| 8.08 | 0.8701 | 0.9150 | 0.0449 | 5.2% | 0.8689 to 0.8701 | yes | no |
+| 10.10 | 1.0775 | 1.1477 | 0.0702 | 6.5% | 1.0707 to 1.0809 | yes | no |
+| 12.13 | 1.2720 | 1.3825 | 0.1105 | 8.7% | 1.2605 to 1.2720 | yes | no |
+| 15.27 | 1.5280 | 1.7349 | 0.2069 | 13.5% | 1.5129 to 1.5280 | no | yes |
+| 18.18 | 1.1886 | 2.0781 | 0.8895 | 74.8% | 0.9967 to 1.1886 | yes | yes |
 
 From 0.01° to 6.01° the FlightTreat lift slope is **0.1122 per degree**. The McCroskey fit at this Reynolds number and Mach number is **0.1075 per degree**. Absolute slope error 0.0048 per degree, relative error 4.4%.
 
@@ -57,7 +57,7 @@ The same 4.11° case shows where the extra lift comes from.
 
 At 4.11° the viscous-inviscid CL at M = 0.15 is 0.4573. Turning Mach off leaves CL at 0.4554. The inviscid solution at M = 0.15 is 0.4980. Viscous coupling changes CL by -0.0406 from that inviscid solution. Prandtl–Glauert changes the viscous CL by +0.0020.
 
-Through 6° the run is converged and the boundary layer stays attached. CL is high by 0.0145 at 2.15° (6.5% of the measured lift) and by 0.0252 at 6.01° (3.9%). The grit-to-grit CL span on those attached stations is at most 0.0111, so the miss is larger than the trip scatter. The relative errors at -4.01° and -2.12° are 0.1% and 2.5%. From 8° upward the solver reports lower-surface laminar separation, and by 18° the experiment has stalled (CL 1.1886) while the panel solution is still at 2.0963.
+Through 6° the run is converged and the boundary layer stays attached. CL is high by 0.0145 at 2.15° (6.5% of the measured lift) and by 0.0252 at 6.01° (3.9%). The grit-to-grit CL span on those attached stations is at most 0.0111, so the miss is larger than the trip scatter. The relative errors at -4.01° and -2.12° are 0.1% and 2.5%. From 8° the lower surface meets Thwaites separation ahead of Michel transition. The march treats that as a lower-surface laminar separation that reattaches (onset s=0.933, reattachment s=0.959). By 18° the experiment has stalled (CL 1.1886) while the panel solution is still at 2.0781.
 
 ## Pressure
 
@@ -100,77 +100,77 @@ Re = 2.88e+06, M = 0.15. CL = 0.0003, CD = 0.00636. Converged: yes. Separated: n
 
 ### α = 10°
 
-Re = 2.88e+06, M = 0.15. CL = 1.1369, CD = 0.01194. Converged: yes. Separated: yes. Stations compared: 22. Dropped: 2.
+Re = 2.88e+06, M = 0.15. CL = 1.1363, CD = 0.01204. Converged: yes. Separated: no. Stations compared: 22. Dropped: 2.
 
 | | Mean absolute error | Maximum absolute error |
 |---|---:|---:|
-| All compared stations | 0.076 | 0.560 |
-| 0.05 ≤ x/c ≤ 0.90 | 0.043 | 0.092 |
+| All compared stations | 0.076 | 0.558 |
+| 0.05 ≤ x/c ≤ 0.90 | 0.042 | 0.092 |
 
 | x/c | Cp reference | Cp FlightTreat | Absolute error | Relative error |
 |---:|---:|---:|---:|---:|
-| 0.0022 | -5.044 | -5.604 | -0.560 | -11.1% |
-| 0.0087 | -5.241 | -5.084 | 0.156 | 3.0% |
-| 0.0131 | -4.671 | -4.653 | 0.018 | 0.4% |
-| 0.0175 | -4.321 | -4.275 | 0.046 | 1.1% |
-| 0.0480 | -2.743 | -2.885 | -0.141 | -5.1% |
-| 0.0742 | -2.261 | -2.353 | -0.092 | -4.1% |
-| 0.0983 | -1.954 | -2.045 | -0.090 | -4.6% |
-| 0.1245 | -1.734 | -1.810 | -0.075 | -4.4% |
-| 0.1463 | -1.559 | -1.637 | -0.078 | -5.0% |
-| 0.1769 | -1.361 | -1.452 | -0.090 | -6.6% |
-| 0.2882 | -1.008 | -1.047 | -0.038 | -3.8% |
+| 0.0022 | -5.044 | -5.601 | -0.558 | -11.1% |
+| 0.0087 | -5.241 | -5.082 | 0.158 | 3.0% |
+| 0.0131 | -4.671 | -4.652 | 0.020 | 0.4% |
+| 0.0175 | -4.321 | -4.273 | 0.048 | 1.1% |
+| 0.0480 | -2.743 | -2.884 | -0.140 | -5.1% |
+| 0.0742 | -2.261 | -2.353 | -0.092 | -4.0% |
+| 0.0983 | -1.954 | -2.044 | -0.090 | -4.6% |
+| 0.1245 | -1.734 | -1.809 | -0.075 | -4.3% |
+| 0.1463 | -1.559 | -1.636 | -0.077 | -5.0% |
+| 0.1769 | -1.361 | -1.451 | -0.090 | -6.6% |
+| 0.2882 | -1.008 | -1.046 | -0.038 | -3.8% |
 | 0.3210 | -0.942 | -0.957 | -0.015 | -1.6% |
 | 0.3843 | -0.787 | -0.806 | -0.019 | -2.4% |
-| 0.4476 | -0.654 | -0.684 | -0.030 | -4.5% |
+| 0.4476 | -0.654 | -0.684 | -0.029 | -4.5% |
 | 0.5153 | -0.543 | -0.555 | -0.012 | -2.1% |
 | 0.5764 | -0.433 | -0.463 | -0.031 | -7.1% |
 | 0.6376 | -0.344 | -0.375 | -0.031 | -9.1% |
 | 0.7009 | -0.255 | -0.287 | -0.033 | -12.8% |
 | 0.7664 | -0.166 | -0.197 | -0.031 | — |
 | 0.8319 | -0.099 | -0.099 | -0.001 | — |
-| 0.8930 | -0.010 | 0.007 | 0.017 | — |
-| 0.9585 | 0.079 | 0.146 | 0.066 | — |
+| 0.8930 | -0.010 | 0.007 | 0.016 | — |
+| 0.9585 | 0.079 | 0.145 | 0.066 | — |
 
 ### α = 15°
 
-Re = 2.88e+06, M = 0.15. CL = 1.7195, CD = 0.02028. Converged: no. Separated: yes. Stations compared: 22. Dropped: 2.
+Re = 2.88e+06, M = 0.15. CL = 1.7257, CD = 0.02066. Converged: no. Separated: no. Stations compared: 22. Dropped: 2.
 
 | | Mean absolute error | Maximum absolute error |
 |---|---:|---:|
-| All compared stations | 0.372 | 1.446 |
-| 0.05 ≤ x/c ≤ 0.90 | 0.176 | 0.389 |
+| All compared stations | 0.378 | 1.481 |
+| 0.05 ≤ x/c ≤ 0.90 | 0.179 | 0.395 |
 
 | x/c | Cp reference | Cp FlightTreat | Absolute error | Relative error |
 |---:|---:|---:|---:|---:|
-| 0.0024 | -10.179 | -11.625 | -1.446 | -14.2% |
-| 0.0045 | -9.720 | -10.840 | -1.120 | -11.5% |
-| 0.0087 | -9.043 | -9.494 | -0.451 | -5.0% |
-| 0.0130 | -8.672 | -8.391 | 0.281 | 3.2% |
-| 0.0168 | -6.161 | -7.580 | -1.419 | -23.0% |
-| 0.0467 | -3.998 | -4.665 | -0.667 | -16.7% |
-| 0.0770 | -3.167 | -3.517 | -0.350 | -11.1% |
-| 0.0965 | -2.686 | -3.075 | -0.389 | -14.5% |
-| 0.1463 | -2.050 | -2.351 | -0.301 | -14.7% |
-| 0.1745 | -1.831 | -2.070 | -0.240 | -13.1% |
-| 0.2874 | -1.236 | -1.417 | -0.181 | -14.6% |
-| 0.3179 | -1.126 | -1.292 | -0.166 | -14.8% |
-| 0.3809 | -0.927 | -1.074 | -0.147 | -15.9% |
-| 0.4439 | -0.727 | -0.900 | -0.173 | -23.8% |
-| 0.5090 | -0.593 | -0.729 | -0.136 | -22.9% |
-| 0.5764 | -0.460 | -0.590 | -0.131 | -28.5% |
-| 0.6351 | -0.348 | -0.478 | -0.130 | -37.5% |
-| 0.6981 | -0.236 | -0.365 | -0.129 | -54.7% |
-| 0.7611 | -0.168 | -0.254 | -0.086 | — |
-| 0.8285 | -0.099 | -0.131 | -0.032 | — |
-| 0.8937 | -0.053 | -0.003 | 0.049 | — |
-| 0.9546 | -0.050 | 0.111 | 0.161 | — |
+| 0.0024 | -10.179 | -11.660 | -1.481 | -14.6% |
+| 0.0045 | -9.720 | -10.871 | -1.151 | -11.8% |
+| 0.0087 | -9.043 | -9.520 | -0.477 | -5.3% |
+| 0.0130 | -8.672 | -8.413 | 0.259 | 3.0% |
+| 0.0168 | -6.161 | -7.599 | -1.438 | -23.3% |
+| 0.0467 | -3.998 | -4.675 | -0.677 | -16.9% |
+| 0.0770 | -3.167 | -3.524 | -0.357 | -11.3% |
+| 0.0965 | -2.686 | -3.081 | -0.395 | -14.7% |
+| 0.1463 | -2.050 | -2.355 | -0.305 | -14.9% |
+| 0.1745 | -1.831 | -2.074 | -0.243 | -13.3% |
+| 0.2874 | -1.236 | -1.420 | -0.184 | -14.9% |
+| 0.3179 | -1.126 | -1.295 | -0.169 | -15.0% |
+| 0.3809 | -0.927 | -1.076 | -0.150 | -16.2% |
+| 0.4439 | -0.727 | -0.903 | -0.176 | -24.2% |
+| 0.5090 | -0.593 | -0.731 | -0.137 | -23.2% |
+| 0.5764 | -0.460 | -0.593 | -0.133 | -28.9% |
+| 0.6351 | -0.348 | -0.480 | -0.132 | -38.0% |
+| 0.6981 | -0.236 | -0.367 | -0.131 | -55.5% |
+| 0.7611 | -0.168 | -0.256 | -0.088 | — |
+| 0.8285 | -0.099 | -0.134 | -0.035 | — |
+| 0.8937 | -0.053 | -0.008 | 0.045 | — |
+| 0.9546 | -0.050 | 0.102 | 0.152 | — |
 
-At 0° the mid-chord mean absolute Cp error is 0.010 and the largest mid-chord absolute error is 0.025. The mid-chord band is the size of a rough photocopy digitising, so it does not support a tighter claim. The largest error on the full set is 0.208 at x/c = 0.0053. At 10° the coupling converged flag is yes and separated is yes. The mid-chord mean absolute error is 0.043 (largest 0.092). The mean signed error on the compared stations is -0.048. A separated run is not an attached-flow agreement. At 15° the solver separated flag is yes, the coupling converged flag is no, and the largest absolute Cp error on the compared stations is 1.446. That 15° distribution is recorded so the failure is visible. It is not an accuracy claim.
+At 0° the mid-chord mean absolute Cp error is 0.010 and the largest mid-chord absolute error is 0.025. The mid-chord band is the size of a rough photocopy digitising, so it does not support a tighter claim. The largest error on the full set is 0.208 at x/c = 0.0053. At 10° the coupling converged flag is yes and separated is no. The mid-chord mean absolute error is 0.042 (largest 0.092). The mean signed error on the compared stations is -0.048. A run with an unrecovered separation is not an attached-flow agreement. At 15° the solver separated flag is no, the coupling converged flag is no, and the largest absolute Cp error on the compared stations is 1.481. That 15° distribution is recorded so the failure is visible. It is not an accuracy claim.
 
 ## Drag
 
-Drag is compared only where two things are both true: the reference is the untripped Abbott polar at Re = 6×10⁶, and this solver did not flag laminar separation. Abbott CD is read at the CL FlightTreat produced, because the file is a drag polar against lift rather than against angle. The NASA file says the digitising is only approximate because the book plot is poor. A difference of a few ten-thousandths can be the digitising.
+Drag is compared only where two things are both true: the reference is the untripped Abbott polar at Re = 6×10⁶, and this solver did not leave an unrecovered laminar separation. A reattached bubble is included. Abbott CD is read at the CL FlightTreat produced, because the file is a drag polar against lift rather than against angle. The NASA file says the digitising is only approximate because the book plot is poor. A difference of a few ten-thousandths can be the digitising.
 
 | α (deg) | CL FlightTreat | CD FlightTreat | CD pressure | CD friction | CD Abbott at that CL | Absolute error | Relative error |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -179,8 +179,10 @@ Drag is compared only where two things are both true: the reference is the untri
 | 2.15 | 0.2381 | 0.00633 | 0.00104 | 0.00529 | 0.00599 | 0.00034 | 5.6% |
 | 4.11 | 0.4573 | 0.00696 | 0.00189 | 0.00507 | 0.00659 | 0.00038 | 5.7% |
 | 6.01 | 0.6739 | 0.00815 | 0.00339 | 0.00476 | 0.00787 | 0.00028 | 3.6% |
+| 8.08 | 0.9150 | 0.00912 | 0.00498 | 0.00415 | 0.00955 | -0.00043 | -4.5% |
+| 10.10 | 1.1477 | 0.01147 | 0.00729 | 0.00418 | 0.01207 | -0.00061 | -5.0% |
 
-At 0° the absolute CD error against the digitised Abbott value is 0.00020 (3.3%). At 6.01° the absolute CD error is 0.00028 (3.6%). Pressure drag at that station is 0.00339 and friction drag is 0.00476. Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped. The published drag is this surface sum. The wake momentum defect is a separate number and is not substituted for it.
+At 0° the absolute CD error against the digitised Abbott value is 0.00020 (3.3%). At 6.01° the absolute CD error is 0.00028 (3.6%). Pressure drag at that station is 0.00339 and friction drag is 0.00476. An unrecovered laminar separation, one that never reaches free-shear transition, is omitted. A bubble that reattaches stays in the table: its drag is the surface pressure integral plus skin friction, with zero wall shear only inside the bubble. The wake momentum defect is a separate number and is not substituted for it.
 
 ## Wake momentum defect
 
@@ -193,20 +195,45 @@ The published CD above is the surface pressure integral plus skin friction. Afte
 | 2.15 | 0.00633 | 0.00586 | 0.00599 |
 | 4.11 | 0.00696 | 0.00617 | 0.00659 |
 | 6.01 | 0.00815 | 0.00663 | 0.00787 |
+| 8.08 | 0.00912 | 0.00565 | 0.00955 |
+| 10.10 | 0.01147 | 0.00605 | 0.01207 |
+| 12.13 | 0.01429 | 0.00648 | — |
+| 18.18 | 0.02590 | 0.00850 | — |
 
-On these attached stations the wake defect lies below the surface sum. It is not substituted for the published drag. The same march on a separated station is not a separated-flow drag result.
+On these stations the wake defect is not substituted for the published drag. A station with an unrecovered separation is not in this table. The direct wake is not a separated-flow drag model.
+
+## Separation and boundary layer
+
+Arc length is measured from the geometric leading edge along the surface. `bubble` is a laminar-separation onset. `reattach` is free-shear transition followed by an attached turbulent restart that stayed attached on its first resolved step. `separation` is an unrecovered separation. A missing entry was not predicted.
+
+| α (deg) | Upper bubble s | Upper reattach s | Upper separation s | Lower bubble s | Lower reattach s | Lower separation s | Iterations | Residual |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| -4.01 | — | — | — | — | — | — | 6 | 2.06e-05 |
+| -2.12 | — | — | — | — | — | — | 5 | 5.15e-05 |
+| 0.00 | — | — | — | — | — | — | 4 | 1.16e-05 |
+| 0.01 | — | — | — | — | — | — | 4 | 1.16e-05 |
+| 2.15 | — | — | — | — | — | — | 5 | 1.78e-05 |
+| 4.11 | — | — | — | — | — | — | 6 | 2.14e-05 |
+| 6.01 | — | — | — | — | — | — | 6 | 2.71e-05 |
+| 8.08 | — | — | — | 0.933 | 0.959 | — | 8 | 1.18e-05 |
+| 10.10 | — | — | — | 0.959 | 0.980 | — | 9 | 1.16e-05 |
+| 12.13 | — | — | — | 0.970 | 0.995 | — | 8 | 2.57e-05 |
+| 15.27 | — | — | — | 0.995 | — | 0.995 | 20 | 1.47e-03 |
+| 18.18 | — | — | 1.002 | 0.988 | 1.006 | — | 9 | 6.74e-05 |
+
+Skin friction is zero between a laminar-separation onset and reattachment, and downstream of an unrecovered separation. Momentum thickness is not held constant there: the laminar part follows the momentum integral with Cf = 0, and a turbulent separated part uses Head's entrainment evaluated at H = 2.8. θ and δ* at the trailing edge are the values the wake is started from. They are not a second drag.
 
 ## What was validated, and what was not
 
 - **CL** was compared with Ladson at matched Reynolds number and Mach number on the 120-grit table. The section is symmetric at 0°. Through 6° the relative lift error runs from 3.9% to 6.5%. It is a real disagreement. The inviscid thick-section circulation is still above the measured slope, and the boundary-layer coupling removes only the part of that difference that a closed-body transpiration integral can see.
-- **Cp** was compared with the digitised Gregory upper-surface distributions at Re = 2.88×10⁶. At 0° the mid-chord mean absolute error is 0.010. At 10° and 15° the tables record whatever the solver produced, including a separated run. A separated distribution is not an attached-flow agreement.
-- **CD** was compared with the digitised untripped Abbott polar only at stations the solver still treats as attached. At zero lift and at 6.01° the absolute CD errors are both reported in the table. They are outside a few ten-thousandths of digitising. Tripped Ladson drag was not used, because the trip condition is not what this solver computes.
+- **Cp** was compared with the digitised Gregory upper-surface distributions at Re = 2.88×10⁶. At 0° the mid-chord mean absolute error is 0.010. At 10° and 15° the tables record whatever the solver produced. A distribution from an unrecovered separation, or from a coupling that did not converge, is not an attached-flow agreement.
+- **CD** was compared with the digitised untripped Abbott polar where the march did not leave an unrecovered laminar separation. At zero lift and at 6.01° the absolute CD errors are both reported in the table. They are outside a few ten-thousandths of digitising. Tripped Ladson drag was not used, because the trip condition is not what this solver computes.
 
 ## Remaining limitations
 
 - The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling puts the contour integral of the outward transpiration into that vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because a closed contour has no wake sheet in the panel system. A displacement body and a wake source were measured separately and were not kept: they did not improve lift without spoiling drag.
-- There is no stall model. Past roughly 15° the calculated CL keeps rising after the experiment breaks.
-- Lower-surface laminar separation is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies. The direct wake is not a separated-flow model, and its momentum defect is not the published drag.
+- There is no stall model. The upper-surface turbulent march on this mesh stays attached through the angles where the Ladson lift is still rising, and at 18° the calculated CL is still far above the stalled measurement. A separated shear layer is marched only after a resolved station reaches H = 2.8 or the skin friction collapses. On this 120-panel mesh that happens at the trailing edge, too late to unload the suction peak.
+- A lower-surface laminar separation that reattaches (onset s=0.933, reattachment s=0.959) is what this 120-panel mesh produces at 8.08°. Wall shear is zero only inside that bubble. An unrecovered laminar separation still withholds L/D. The direct wake is not a separated-flow drag model, and its momentum defect is not the published drag.
 - Michel transition is not a grit trip at 5% chord. A tripped-drag comparison would mix two boundary layers.
 - Gregory Cp and Abbott CD were digitised from plots. NASA marks both files as only approximate. Differences smaller than a few hundredths in Cp, or a few ten-thousandths in CD, should not be read as a measured improvement.
 - One mesh is reported: 120 cosine panels. A finer or coarser mesh will move Cp at the leading edge and can move the separation flag. This is not a grid-converged study.

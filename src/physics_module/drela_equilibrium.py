@@ -9,12 +9,21 @@ Compressibility is absent: the panel solver's edge speed is already the
 speed passed to the boundary layer, and the kinematic shape factor is the
 shape factor.
 
-What this file does not contain is the rest of XFOIL. There is no shear-stress
-lag equation, so the turbulent shear coefficient is the local equilibrium
-value rather than a lagged history. There is no envelope e^n transition and
-no simultaneous Newton coupling of the boundary layer to the panel system.
-A direct step that cannot stay attached stops. It does not march through a
-Goldstein singularity.
+What this file does not contain is the rest of XFOIL. There is no envelope
+e^n transition and no simultaneous Newton coupling of the boundary layer to
+the panel system. A direct step that cannot stay attached stops. It does not
+march through a Goldstein singularity.
+
+``march_interval`` is the equilibrium closure: the shear coefficient at each
+station is the local equilibrium value. ``relax_shear_stress`` and the
+optional ``c_tau`` argument are Drela and Giles' lag equation
+
+    (δ / Cτ) dCτ/ds = 4.2 (√Cτ_eq − √Cτ)
+
+with δ = θ (3.15 + 1.72/(H−1)) + δ*. Passing no shear stress leaves the
+equilibrium step unchanged. The lag integration is not an XFOIL solution:
+the constant is the 1987 value 4.2, the panel coupling is still a direct
+march, and there is no e^n transition.
 
 Wake stations use the same equations with zero skin friction. Dissipation is
 doubled because the correlations are for one shear layer and a merged wake
@@ -33,6 +42,8 @@ _CT = 0.5 / (_GA * _GA * _GB)
 _HS_MIN = 1.5
 _DHS_INF = 0.015
 _LOG10 = np.log(10.0)
+# Drela & Giles (1987). XFOIL's later SCCON is a different calibration.
+_LAG_RATE = 4.2
 
 
 def kinetic_shape_factor(shape_h: float, reynolds_theta: float) -> float:
@@ -166,6 +177,56 @@ def _equilibrium_sqrt_shear(
     return float(np.sqrt(argument))
 
 
+def nominal_boundary_layer_thickness(theta: float, shape_h: float) -> float:
+    """Drela's nominal thickness δ = θ (3.15 + 1.72/(H−1)) + δ*.
+
+    δ* = H θ. H is kept above 1.05 so the wake term stays finite. This
+    length is the lag scale. It is not the diagnostic 1/7-power thickness
+    stored on the boundary-layer solution.
+    """
+
+    h = max(float(shape_h), 1.05)
+    th = max(float(theta), 1.0e-12)
+    return float(th * (3.15 + 1.72 / (h - 1.0) + h))
+
+
+def relax_shear_stress(
+    c_tau: float,
+    c_tau_eq: float,
+    theta: float,
+    shape_h: float,
+    ds: float,
+) -> float:
+    """Advance Cτ by the exact lag step at frozen δ and Cτ_eq.
+
+    The ODE is dσ/ds = (2.1/δ) σ (σ_eq − σ) with σ = √Cτ, which is
+    (δ/Cτ) dCτ/ds = 4.2 (σ_eq − σ). A non-positive incoming stress has
+    no history, so the step returns the equilibrium value. The result is
+    never negative.
+    """
+
+    sigma_eq = float(np.sqrt(max(float(c_tau_eq), 0.0)))
+    sigma0 = float(np.sqrt(max(float(c_tau), 0.0)))
+    if not np.isfinite(sigma_eq) or not np.isfinite(sigma0):
+        return float("nan")
+    if sigma_eq <= 0.0:
+        return 0.0
+    if sigma0 <= 1.0e-16 or not np.isfinite(ds) or ds <= 0.0:
+        return float(sigma_eq * sigma_eq)
+    delta = nominal_boundary_layer_thickness(theta, shape_h)
+    exponent = -(0.5 * _LAG_RATE) / delta * sigma_eq * float(ds)
+    if exponent < -60.0:
+        sigma = sigma_eq
+    else:
+        denominator = 1.0 + (sigma_eq / sigma0 - 1.0) * float(np.exp(exponent))
+        if denominator <= 1.0e-12 or not np.isfinite(denominator):
+            return float("nan")
+        sigma = sigma_eq / denominator
+    if not np.isfinite(sigma) or sigma < 0.0:
+        return float("nan")
+    return float(sigma * sigma)
+
+
 def dissipation_coefficient(
     shape_h: float,
     reynolds_theta: float,
@@ -219,12 +280,17 @@ def layer_state(
     edge_slope: float,
     nu: float,
     wake: bool,
+    sqrt_shear: float | None = None,
 ) -> dict[str, float] | None:
     """Rates at one station.
 
     ``energy`` is θ dH*/ds, the right-hand side of the kinetic-energy
     equation. ``dtheta`` is dθ/ds from the momentum integral. Both use the
     prescribed edge speed. Returns ``None`` when the closures are not finite.
+
+    ``sqrt_shear`` replaces the equilibrium √Cτ in the dissipation. ``None``
+    keeps the equilibrium closure. Skin friction stays the local CFT value;
+    the lag changes dissipation, and Cf changes only because H and θ change.
     """
 
     hk = float(np.clip(shape_h, 1.00005 if wake else 1.05, 3.99))
@@ -240,7 +306,10 @@ def layer_state(
     cf = 0.0 if wake else turbulent_skin_friction(hk, rt)
     if not np.isfinite(cf):
         return None
-    shear = _equilibrium_sqrt_shear(hs, hk, rt, us, wake)
+    equilibrium_shear = _equilibrium_sqrt_shear(hs, hk, rt, us, wake)
+    shear = equilibrium_shear if sqrt_shear is None else float(sqrt_shear)
+    if not np.isfinite(shear) or shear < 0.0:
+        return None
     di = dissipation_coefficient(hk, rt, hs, us, cf, shear, wake)
     if not np.isfinite(di):
         return None
@@ -257,6 +326,8 @@ def layer_state(
         "cf": float(cf),
         "dtheta": float(dtheta),
         "energy": float(energy),
+        "equilibrium_sqrt_shear": float(equilibrium_shear),
+        "sqrt_shear": float(shear),
     }
 
 
@@ -294,19 +365,27 @@ def march_interval(
     nu: float,
     *,
     wake: bool,
-) -> tuple[float, float, float, bool]:
-    """Advance one interval. Returns θ, H, Cf at the downstream end, and a separation flag.
+    c_tau: float | None = None,
+) -> tuple[float, float, float, bool] | tuple[float, float, float, bool, float]:
+    """Advance one interval. Returns θ, H, Cf, and a separation flag.
 
     The step is a predictor-corrector. An interval whose shape factor would
     jump by more than 0.2 is split, down to a minimum width, instead of
     taking the explicit step that drives a direct method through separation.
+
+    ``c_tau is None`` is the equilibrium closure and returns four values.
+    A supplied Cτ is lagged across the step and returned as the fifth value.
     """
 
     if not np.isfinite(ds) or ds <= 0.0:
-        state = layer_state(theta, shape_h, edge_start, 0.0, nu, wake)
+        shear = None if c_tau is None else float(np.sqrt(max(c_tau, 0.0)))
+        state = layer_state(theta, shape_h, edge_start, 0.0, nu, wake, sqrt_shear=shear)
         cf = 0.0 if state is None else state["cf"]
-        return float(theta), float(shape_h), cf, state is None
-    return _march_piece(
+        failed = state is None
+        if c_tau is None:
+            return float(theta), float(shape_h), cf, failed
+        return float(theta), float(shape_h), cf, failed, float(c_tau)
+    theta_out, shape_out, cf_out, separated, c_out = _march_piece(
         float(theta),
         float(shape_h),
         float(edge_start),
@@ -315,7 +394,11 @@ def march_interval(
         float(nu),
         wake,
         0,
+        c_tau,
     )
+    if c_tau is None:
+        return theta_out, shape_out, cf_out, separated
+    return theta_out, shape_out, cf_out, separated, float(c_out)
 
 
 def _march_piece(
@@ -327,43 +410,60 @@ def _march_piece(
     nu: float,
     wake: bool,
     depth: int,
-) -> tuple[float, float, float, bool]:
+    c_tau: float | None,
+) -> tuple[float, float, float, bool, float | None]:
     due = (edge_end - edge_start) / ds
-    state = layer_state(theta, shape_h, edge_start, due, nu, wake)
+    shear = None if c_tau is None else float(np.sqrt(max(c_tau, 0.0)))
+    state = layer_state(theta, shape_h, edge_start, due, nu, wake, sqrt_shear=shear)
     if state is None:
-        return theta, shape_h, 0.0, True
+        return theta, shape_h, 0.0, True, c_tau
     dtheta = state["dtheta"] * ds
     dshape = _shape_rate(theta, shape_h, edge_start, due, nu, wake, state) * ds
     stiff = abs(dshape) > 0.2 or abs(dtheta) > 0.5 * max(theta, 1.0e-6)
     if stiff and ds > 1.0e-5 and depth < 8 and np.isfinite(dshape):
         mid = 0.5 * (edge_start + edge_end)
         half = 0.5 * ds
-        theta, shape_h, cf, separated = _march_piece(
-            theta, shape_h, edge_start, mid, half, nu, wake, depth + 1
+        theta, shape_h, cf, separated, c_tau = _march_piece(
+            theta, shape_h, edge_start, mid, half, nu, wake, depth + 1, c_tau
         )
         if separated:
-            return theta, shape_h, cf, True
-        return _march_piece(theta, shape_h, mid, edge_end, half, nu, wake, depth + 1)
+            return theta, shape_h, cf, True, c_tau
+        return _march_piece(theta, shape_h, mid, edge_end, half, nu, wake, depth + 1, c_tau)
     if not np.isfinite(dshape) or depth >= 8 and stiff:
-        return theta, shape_h, state["cf"], True
+        return theta, shape_h, state["cf"], True, c_tau
 
     predicted_theta = max(theta + dtheta, 1.0e-12)
     predicted_shape = shape_h + (0.0 if not np.isfinite(dshape) else dshape)
-    arrival = layer_state(predicted_theta, predicted_shape, edge_end, due, nu, wake)
+    c_tau_end = c_tau
+    arrival_shear = None
+    if c_tau is not None:
+        c_tau_end = relax_shear_stress(
+            float(c_tau),
+            float(state["equilibrium_sqrt_shear"] ** 2),
+            theta,
+            shape_h,
+            ds,
+        )
+        if not np.isfinite(c_tau_end):
+            return theta, shape_h, state["cf"], True, c_tau
+        arrival_shear = float(np.sqrt(max(c_tau_end, 0.0)))
+    arrival = layer_state(
+        predicted_theta, predicted_shape, edge_end, due, nu, wake, sqrt_shear=arrival_shear
+    )
     if arrival is None:
-        return theta, shape_h, state["cf"], True
+        return theta, shape_h, state["cf"], True, c_tau
     dshape_end = _shape_rate(
         predicted_theta, predicted_shape, edge_end, due, nu, wake, arrival
     ) * ds
     if not np.isfinite(dshape_end):
-        return theta, shape_h, state["cf"], True
+        return theta, shape_h, state["cf"], True, c_tau
     theta_new = max(theta + 0.5 * (dtheta + arrival["dtheta"] * ds), 1.0e-12)
     shape_new = shape_h + 0.5 * (dshape + dshape_end)
     cf = arrival["cf"]
     if not np.isfinite(theta_new) or not np.isfinite(shape_new):
-        return theta, shape_h, cf, True
+        return theta, shape_h, cf, True, c_tau
     limit = 3.0 if wake else 2.8
     separated = shape_new >= limit or (not wake and cf <= 0.0)
     if shape_new < (1.01 if wake else 1.05):
         shape_new = 1.01 if wake else 1.05
-    return float(theta_new), float(shape_new), float(cf), bool(separated)
+    return float(theta_new), float(shape_new), float(cf), bool(separated), c_tau_end

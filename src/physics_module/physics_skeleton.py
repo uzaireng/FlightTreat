@@ -41,7 +41,7 @@ class InvalidFlowConditionError(PhysicsEngineError, ValueError):
 FlowRegime = Literal["inviscid", "viscous_inviscid"]
 TwoDPanelModel = Literal["vortex", "source_vortex"]
 ThreeDPanelModel = Literal["constant_source_doublet", "constant_doublet"]
-IBLClosure = Literal["thwaites_head", "drela_two_equation"]
+IBLClosure = Literal["thwaites_head", "drela_two_equation", "drela_lag"]
 
 
 class FreestreamConditions(TypedDict):
@@ -120,6 +120,10 @@ class IBLSolution(TypedDict):
     The wake arrays are the merged shear layer downstream of the trailing
     edge. ``cd_momentum`` is the Squire–Young value at the last wake
     station. It is not the published drag coefficient.
+
+    ``separation_s_*`` is an unrecovered separation. ``bubble_s_*`` is a
+    laminar-separation onset whether or not the free shear layer
+    reattached. ``reattachment_s_*`` is that reattachment, or NaN.
     """
 
     theta_upper: np.ndarray
@@ -135,10 +139,15 @@ class IBLSolution(TypedDict):
     transition_s_upper: float
     transition_s_lower: float
     separated: bool
+    model_limited: bool
     delta_upper: np.ndarray
     delta_lower: np.ndarray
     separation_s_upper: float
     separation_s_lower: float
+    bubble_s_upper: float
+    bubble_s_lower: float
+    reattachment_s_upper: float
+    reattachment_s_lower: float
     separated_upper: np.ndarray
     separated_lower: np.ndarray
     stagnation_xy: np.ndarray
@@ -369,6 +378,15 @@ def _check_ibl(ibl: IBLSolution) -> None:
         _f64(name, ibl[name], (n_lower,))  # type: ignore[literal-required]
     _bool_vec("separated_upper", ibl["separated_upper"], n_upper)
     _bool_vec("separated_lower", ibl["separated_lower"], n_lower)
+    for name in (
+        "bubble_s_upper",
+        "bubble_s_lower",
+        "reattachment_s_upper",
+        "reattachment_s_lower",
+    ):
+        station = float(ibl[name])  # type: ignore[literal-required]
+        if not np.isnan(station) and not np.isfinite(station):
+            raise ValueError(f"{name} must be finite or NaN.")
     _f64("stagnation_xy", ibl["stagnation_xy"], (2,))
     for side in ("upper", "lower"):
         theta = np.asarray(ibl[f"theta_{side}"])  # type: ignore[literal-required]

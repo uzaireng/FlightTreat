@@ -606,12 +606,15 @@ def test_tied_transition_stays_attached() -> None:
     _assert(np.all(theta > 0.0), "momentum thickness vanished in the aft window")
 
 
-def test_laminar_separation_before_transition_still_freezes() -> None:
-    """At 10 deg, Thwaites trips on an earlier station than Michel.
+def test_laminar_separation_before_transition_forms_a_bubble() -> None:
+    """At 10 deg and Re = 5e5 the upper surface separates laminarly before Michel.
 
-    That ordering is real laminar separation, not the 4 deg tie. Downstream
-    skin friction stays at the separated value of zero. The existing 10 deg
-    test still requires the warning and a finite pressure field.
+    That ordering is real laminar separation, not the 4 deg tie. The free
+    shear layer then transitions and the attached restart reattaches, so
+    skin friction downstream of reattachment is not left at zero and the
+    momentum thickness is not a frozen copy. The lower surface on this
+    mesh does not reach free-shear transition, and that unrecovered
+    laminar separation is still not a validated drag.
     """
 
     mesh = _mesh(
@@ -622,31 +625,38 @@ def test_laminar_separation_before_transition_still_freezes() -> None:
     ibl = solved["ibl"]
     stations = mesh["ibl_1d"]
     assert ibl is not None and stations is not None
-    _assert(ibl["separated"], "10 deg march should separate")
-    _assert(np.isfinite(ibl["separation_s_upper"]), "upper separation station missing")
-    _assert(np.isfinite(ibl["transition_s_upper"]), "upper transition station missing")
+    _assert(ibl["separated"], "10 deg march should still separate somewhere")
+    _assert(np.isfinite(ibl["bubble_s_upper"]), "upper laminar-separation onset missing")
+    _assert(np.isfinite(ibl["reattachment_s_upper"]), "upper free shear layer did not reattach")
     _assert(
-        float(ibl["separation_s_upper"]) < float(ibl["transition_s_upper"]),
-        (
-            f"separation s={ibl['separation_s_upper']:.4f} is not upstream of "
-            f"transition s={ibl['transition_s_upper']:.4f}"
-        ),
+        float(ibl["bubble_s_upper"]) < float(ibl["reattachment_s_upper"]),
+        "reattachment is not downstream of laminar separation",
     )
+    _assert(not np.isfinite(ibl["separation_s_upper"]), "upper reattachment was recorded as an unrecovered stall")
     arc = np.asarray(stations["s_upper"], dtype=np.float64)
-    downstream = arc >= float(ibl["separation_s_upper"])
+    theta = np.asarray(ibl["theta_upper"], dtype=np.float64)
     cf = np.asarray(ibl["cf_upper"], dtype=np.float64)
-    _assert(int(np.count_nonzero(downstream)) >= 4, "separation has too few downstream stations")
-    _assert(float(np.max(np.abs(cf[downstream]))) == 0.0, "laminar separation did not freeze skin friction")
-    _assert(np.all(np.isfinite(cf)), "separated skin friction must stay finite")
+    onset = int(np.argmin(np.abs(arc - float(ibl["bubble_s_upper"]))))
+    reattached = int(np.argmin(np.abs(arc - float(ibl["reattachment_s_upper"]))))
+    _assert(reattached > onset, "reattachment index is not downstream")
+    _assert(float(np.max(np.abs(cf[onset:reattached]))) == 0.0, "bubble wall shear was not zero")
+    aft = cf[reattached:]
+    _assert(aft.size >= 4, "reattached run is too short to check")
+    _assert(float(np.median(aft)) > 0.0, "reattached skin friction stayed at zero")
+    _assert(float(theta[-1]) > float(theta[onset]), "momentum thickness was frozen at separation")
+    _assert(np.all(np.isfinite(cf)) and np.all(np.isfinite(theta)), "upper boundary layer is not finite")
+    _assert(np.all(theta[onset:] > 0.0), "momentum thickness vanished at or after separation")
+    _assert(np.isfinite(ibl["separation_s_lower"]), "lower surface should still be separated on this mesh")
+    _assert(not np.isfinite(ibl["transition_s_lower"]), "lower surface reached a transition it does not march")
     _assert(any("separated" in note.lower() for note in solved["warnings"]), "separation needs a warning")
     _assert(
-        any("not a validated drag result" in note.lower() for note in solved["warnings"]),
-        "laminar freeze must not be reported as a complete drag solution",
+        any("not a validated" in note.lower() for note in solved["warnings"]),
+        "unrecovered laminar separation must not be reported as a complete drag solution",
     )
     report = AeroEngine().analyze_from_solution(mesh, solved)
     _assert(
         not np.isfinite(report["l_over_d"]),
-        "L/D stayed finite after laminar separation omitted the downstream friction",
+        "L/D stayed finite while the lower surface never left laminar separation",
     )
 
 
@@ -769,9 +779,10 @@ def test_marginal_rebound_does_not_revoke_laminar_separation() -> None:
     """A prior laminar separation survives λ ≈ -0.089 and releases above -0.08.
 
     New separation still requires λ ≤ -0.09. The station just above that
-    line is not a new separation, but it is inside the retain band, so the
-    previous station stays frozen. Past -0.08 the same retained index is
-    dropped.
+    line is not a new onset, but it is inside the retain band, so the
+    previous station stays the bubble onset. The shear layer may reattach;
+    retention is about the onset, not a frozen profile. Past -0.08 the
+    same retained index is dropped.
     """
 
     arc = np.linspace(0.0, 1.0, 60)
@@ -786,12 +797,18 @@ def test_marginal_rebound_does_not_revoke_laminar_separation() -> None:
     )
     fresh = _side_state(arc, marginal, nu=nu)
     _assert(
-        int(fresh["separated_at"]) != station,
+        not np.isfinite(float(fresh["bubble_s"])) or abs(float(fresh["bubble_s"]) - float(arc[station])) > 1.0e-8,
         "the -0.09 rule selected a station that is only inside the retain band",
     )
     held = _side_state(arc, marginal, nu=nu, retained_index=station)
-    _assert(int(held["separated_at"]) == station, "marginal rebound revoked the previous separation")
-    _assert(float(np.max(np.abs(held["cf"][station:]))) == 0.0, "retained separation did not freeze skin friction")
+    _assert(
+        abs(float(held["bubble_s"]) - float(arc[station])) < 1.0e-8,
+        "marginal rebound revoked the previous separation onset",
+    )
+    _assert(float(held["cf"][station]) == 0.0, "retained onset did not leave the wall")
+    theta = np.asarray(held["theta"], dtype=np.float64)
+    _assert(float(theta[-1]) > float(theta[station]), "retained shear layer froze the momentum thickness")
+    _assert(np.all(np.isfinite(held["cf"])) and np.all(theta[station:] > 0.0), "retained shear layer is not physical")
 
     recovered_drop = _drop_for_lambda(arc, station, nu, -0.07)
     recovered = _aft_deceleration(arc, recovered_drop)
@@ -799,7 +816,7 @@ def test_marginal_rebound_does_not_revoke_laminar_separation() -> None:
     _assert(recovered_lambda > -0.08, f"recovery λ {recovered_lambda:.5f} did not pass the release level")
     released = _side_state(arc, recovered, nu=nu, retained_index=station)
     _assert(
-        int(released["separated_at"]) != station,
+        not np.isfinite(float(released["bubble_s"])) or abs(float(released["bubble_s"]) - float(arc[station])) > 1.0e-8,
         "λ beyond the release level kept the old separation station",
     )
 
@@ -808,10 +825,11 @@ def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
     """160-panel NACA 0012 at 4 deg must not wipe aft skin friction.
 
     A graze on the single station before transition is the same two-station
-    tie a coarser mesh lands on the transition index. Both meshes stay
-    attached, converge inside the iteration cap, and keep the same friction
-    drag to within 25 percent. A deep adjacent hit, such as 10 deg, still
-    freezes.
+    tie a coarser mesh lands on the transition index. The upper surface
+    stays attached. A lower-surface bubble may reattach; that coupling
+    takes more than eight under-relaxed passes and must still finish
+    inside the 20-pass cap with the displacement residual under 1e-4.
+    Friction drag stays within 25 percent of the 64-panel mesh.
     """
 
     fine = _mesh(
@@ -830,7 +848,7 @@ def test_fine_cruise_coupling_converges_without_separation_chatter() -> None:
     assert ibl is not None
     _assert(solved["converged"], f"fine cruise coupling did not converge, residual={solved['residual']:.3e}")
     _assert(solved["residual"] < 1.0e-4, f"fine cruise residual {solved['residual']:.3e}")
-    _assert(int(solved["vic_iterations"]) <= 8, f"fine cruise used {solved['vic_iterations']} iterations")
+    _assert(int(solved["vic_iterations"]) <= 20, f"fine cruise used {solved['vic_iterations']} iterations")
     _assert(
         not np.isfinite(float(ibl["separation_s_upper"])),
         f"160-panel upper surface froze at {ibl['separation_s_upper']}",
@@ -998,7 +1016,7 @@ if __name__ == "__main__":
     test_open_patch_keeps_centroid_box_area()
     test_cruise_transition_does_not_zero_aft_skin_friction()
     test_tied_transition_stays_attached()
-    test_laminar_separation_before_transition_still_freezes()
+    test_laminar_separation_before_transition_forms_a_bubble()
     test_trailing_edge_cluster_does_not_force_separation()
     test_skin_friction_drag_uses_freestream_dynamic_pressure()
     test_marginal_rebound_does_not_revoke_laminar_separation()

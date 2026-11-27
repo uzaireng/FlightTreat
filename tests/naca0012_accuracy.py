@@ -183,6 +183,12 @@ def _solve(mesh, alpha: float, reynolds: float, mach: float, regime: str) -> dic
         "iterations": int(output["vic_iterations"]),
         "residual": float(output["residual"]),
         "separated": bool(ibl["separated"]) if ibl is not None else False,
+        "bubble_s_upper": float("nan") if ibl is None else float(ibl["bubble_s_upper"]),
+        "bubble_s_lower": float("nan") if ibl is None else float(ibl["bubble_s_lower"]),
+        "reattachment_s_upper": float("nan") if ibl is None else float(ibl["reattachment_s_upper"]),
+        "reattachment_s_lower": float("nan") if ibl is None else float(ibl["reattachment_s_lower"]),
+        "separation_s_upper": float("nan") if ibl is None else float(ibl["separation_s_upper"]),
+        "separation_s_lower": float("nan") if ibl is None else float(ibl["separation_s_lower"]),
         "drag_supported": ibl is not None and output["converged"] and not laminar_drag_is_unsupported(ibl),
         "transition_s_upper": float(ibl["transition_s_upper"]) if ibl is not None else float("nan"),
         "transition_s_lower": float(ibl["transition_s_lower"]) if ibl is not None else float("nan"),
@@ -376,11 +382,18 @@ def _negative_lift_sentence(result: dict) -> str:
 
 def _separation_phrase(result: dict) -> str:
     eight = next(row for row in result["lift_rows"] if abs(row["solved"]["alpha_deg"] - 8.08) < 1e-9)
-    warnings = eight["solved"]["warnings"]
-    if any("lower surface" in warning for warning in warnings):
-        return "lower-surface laminar separation"
-    if eight["solved"]["separated"]:
-        return "laminar separation"
+    solved = eight["solved"]
+    if (
+        np.isfinite(solved["bubble_s_lower"])
+        and np.isfinite(solved["reattachment_s_lower"])
+        and not solved["separated"]
+    ):
+        return (
+            "a lower-surface laminar separation that reattaches "
+            f"(onset s={solved['bubble_s_lower']:.3f}, reattachment s={solved['reattachment_s_lower']:.3f})"
+        )
+    if solved["separated"]:
+        return "separation"
     return "no separation flag at 8.08°"
 
 
@@ -493,9 +506,11 @@ def render_report(result: dict) -> str:
         + _grit_sentence(result)
         + " "
         + _negative_lift_sentence(result)
-        + " From 8° upward the solver reports "
+        + " From 8° the lower surface meets Thwaites separation ahead of Michel transition. "
+        + "The march treats that as "
         + _separation_phrase(result)
-        + ", and by 18° the experiment has stalled "
+        + ". "
+        + "By 18° the experiment has stalled "
         f"(CL {stalled['cl_ref']:.4f}) while the panel solution is still at {stalled['solved']['cl']:.4f}."
     )
     add("")
@@ -548,7 +563,7 @@ def render_report(result: dict) -> str:
         f"The mid-chord mean absolute error is {cp10['cp']['mid_mae']:.3f} "
         f"(largest {cp10['cp']['mid_max_abs']:.3f}). "
         f"The mean signed error on the compared stations is {cp10_signed:+.3f}. "
-        "A separated run is not an attached-flow agreement. "
+        "A run with an unrecovered separation is not an attached-flow agreement. "
         f"At 15° the solver separated flag is {'yes' if cp15['solved']['separated'] else 'no'}, "
         f"the coupling converged flag is {'yes' if cp15['solved']['converged'] else 'no'}, "
         f"and the largest absolute Cp error on the compared stations is {cp15['cp']['max_abs']:.3f}. "
@@ -557,7 +572,7 @@ def render_report(result: dict) -> str:
     add("")
     add("## Drag")
     add("")
-    add("Drag is compared only where two things are both true: the reference is the untripped Abbott polar at Re = 6×10⁶, and this solver did not flag laminar separation. Abbott CD is read at the CL FlightTreat produced, because the file is a drag polar against lift rather than against angle. The NASA file says the digitising is only approximate because the book plot is poor. A difference of a few ten-thousandths can be the digitising.")
+    add("Drag is compared only where two things are both true: the reference is the untripped Abbott polar at Re = 6×10⁶, and this solver did not leave an unrecovered laminar separation. A reattached bubble is included. Abbott CD is read at the CL FlightTreat produced, because the file is a drag polar against lift rather than against angle. The NASA file says the digitising is only approximate because the book plot is poor. A difference of a few ten-thousandths can be the digitising.")
     add("")
     add("| α (deg) | CL FlightTreat | CD FlightTreat | CD pressure | CD friction | CD Abbott at that CL | Absolute error | Relative error |")
     add("|---:|---:|---:|---:|---:|---:|---:|---:|")
@@ -591,8 +606,10 @@ def render_report(result: dict) -> str:
         f"({_pct(six['cd_rel'])}). "
         f"Pressure drag at that station is {six['solved']['cd_pressure']:.5f} "
         f"and friction drag is {six['solved']['cd_friction']:.5f}. "
-        "Stations the solver flags as laminar separation are omitted: skin friction downstream of that flag is dropped. "
-        "The published drag is this surface sum. The wake momentum defect is a separate number and is not substituted for it."
+        "An unrecovered laminar separation, one that never reaches free-shear transition, is omitted. "
+        "A bubble that reattaches stays in the table: its drag is the surface pressure integral plus skin friction, "
+        "with zero wall shear only inside the bubble. "
+        "The wake momentum defect is a separate number and is not substituted for it."
     )
     add("")
     add("## Wake momentum defect")
@@ -625,7 +642,31 @@ def render_report(result: dict) -> str:
             )
         )
     add("")
-    add("On these attached stations the wake defect lies below the surface sum. It is not substituted for the published drag. The same march on a separated station is not a separated-flow drag result.")
+    add("On these stations the wake defect is not substituted for the published drag. A station with an unrecovered separation is not in this table. The direct wake is not a separated-flow drag model.")
+    add("")
+    add("## Separation and boundary layer")
+    add("")
+    add("Arc length is measured from the geometric leading edge along the surface. `bubble` is a laminar-separation onset. `reattach` is free-shear transition followed by an attached turbulent restart that stayed attached on its first resolved step. `separation` is an unrecovered separation. A missing entry was not predicted.")
+    add("")
+    add("| α (deg) | Upper bubble s | Upper reattach s | Upper separation s | Lower bubble s | Lower reattach s | Lower separation s | Iterations | Residual |")
+    add("|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for row in result["lift_rows"]:
+        solved = row["solved"]
+        add(
+            "| {alpha:.2f} | {bu} | {ru} | {su} | {bl} | {rl} | {sl} | {it} | {res} |".format(
+                alpha=solved["alpha_deg"],
+                bu=_fmt(solved["bubble_s_upper"], 3),
+                ru=_fmt(solved["reattachment_s_upper"], 3),
+                su=_fmt(solved["separation_s_upper"], 3),
+                bl=_fmt(solved["bubble_s_lower"], 3),
+                rl=_fmt(solved["reattachment_s_lower"], 3),
+                sl=_fmt(solved["separation_s_lower"], 3),
+                it=solved["iterations"],
+                res=f"{solved['residual']:.2e}",
+            )
+        )
+    add("")
+    add("Skin friction is zero between a laminar-separation onset and reattachment, and downstream of an unrecovered separation. Momentum thickness is not held constant there: the laminar part follows the momentum integral with Cf = 0, and a turbulent separated part uses Head's entrainment evaluated at H = 2.8. θ and δ* at the trailing edge are the values the wake is started from. They are not a second drag.")
     add("")
     add("## What was validated, and what was not")
     add("")
@@ -646,11 +687,12 @@ def render_report(result: dict) -> str:
     add(
         "- **Cp** was compared with the digitised Gregory upper-surface distributions at Re = 2.88×10⁶. "
         f"At 0° the mid-chord mean absolute error is {cp0['cp']['mid_mae']:.3f}. "
-        "At 10° and 15° the tables record whatever the solver produced, including a separated run. "
-        "A separated distribution is not an attached-flow agreement."
+        "At 10° and 15° the tables record whatever the solver produced. "
+        "A distribution from an unrecovered separation, or from a coupling that did not converge, "
+        "is not an attached-flow agreement."
     )
     add(
-        "- **CD** was compared with the digitised untripped Abbott polar only at stations the solver still treats as attached. "
+        "- **CD** was compared with the digitised untripped Abbott polar where the march did not leave an unrecovered laminar separation. "
         "At zero lift and at 6.01° the absolute CD errors are both reported in the table. "
         "They are outside a few ten-thousandths of digitising. "
         "Tripped Ladson drag was not used, because the trip condition is not what this solver computes."
@@ -659,12 +701,15 @@ def render_report(result: dict) -> str:
     add("## Remaining limitations")
     add("")
     add("- The inviscid vortex-panel circulation of this thick section is still steeper than the Ladson and McCroskey slopes. Coupling puts the contour integral of the outward transpiration into that vortex system, so the circulation can change. The length-weighted mean of the transpiration is removed because a closed contour has no wake sheet in the panel system. A displacement body and a wake source were measured separately and were not kept: they did not improve lift without spoiling drag.")
-    add("- There is no stall model. Past roughly 15° the calculated CL keeps rising after the experiment breaks.")
+    add("- There is no stall model. The upper-surface turbulent march on this mesh stays attached through the angles where the Ladson lift is still rising, and at 18° the calculated CL is still far above the stalled measurement. A separated shear layer is marched only after a resolved station reaches H = 2.8 or the skin friction collapses. On this 120-panel mesh that happens at the trailing edge, too late to unload the suction peak.")
     add(
         "- "
         + _separation_phrase(result)[:1].upper()
         + _separation_phrase(result)[1:]
-        + " is flagged from about 8° on this 120-panel mesh. The drag warning in the solver applies. The direct wake is not a separated-flow model, and its momentum defect is not the published drag."
+        + " is what this 120-panel mesh produces at 8.08°. "
+        + "Wall shear is zero only inside that bubble. "
+        + "An unrecovered laminar separation still withholds L/D. "
+        + "The direct wake is not a separated-flow drag model, and its momentum defect is not the published drag."
     )
     add("- Michel transition is not a grit trip at 5% chord. A tripped-drag comparison would mix two boundary layers.")
     add("- Gregory Cp and Abbott CD were digitised from plots. NASA marks both files as only approximate. Differences smaller than a few hundredths in Cp, or a few ten-thousandths in CD, should not be read as a measured improvement.")
